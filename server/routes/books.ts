@@ -23,6 +23,7 @@ import {
   getR2Client,
   getR2BucketName,
   syncBooksFromR2,
+  saveChaptersToR2,
 } from '../services/r2';
 import { GetObjectCommand } from '@aws-sdk/client-s3';
 import { getAudioMetadata } from '../services/ffmpeg';
@@ -30,7 +31,6 @@ import {
   transcribeAudioWithGroq,
   detectChaptersWithGroq,
   parseChaptersFromDescriptionWithGroq,
-  parseTimestampDescriptionRegex,
 } from '../services/groq';
 
 function parseTimestampToSeconds(timestamp: string): number {
@@ -270,6 +270,9 @@ router.post(
       await insertBook(bookData);
       await insertChapters(formattedChapters);
 
+      // Save chapters.json metadata permanently to Cloudflare R2 bucket
+      await saveChaptersToR2(bookId, { book: bookData, chapters: formattedChapters });
+
       // Clean up temporary upload files
       try {
         if (fs.existsSync(audioFile.path)) fs.unlinkSync(audioFile.path);
@@ -292,7 +295,75 @@ router.post(
   }
 );
 
-// 4. GET /api/books/:id/audio (HTTP Range Audio Streaming Proxy - Cloudflare R2 + Local Fallback)
+// 4. PUT /api/books/:id/chapters (Update or Re-parse Chapters with Groq AI Description)
+router.put('/books/:id/chapters', async (req: Request, res: Response) => {
+  try {
+    const id = req.params.id as string;
+    const book = await getBookById(id);
+    if (!book) return res.status(404).json({ error: 'Audiobook not found' });
+
+    const { timestampDescription, manualTimestamps } = req.body;
+
+    let detectedChapters: Array<{
+      chapter_number: number;
+      title: string;
+      start_time: number;
+      end_time: number;
+    }> = [];
+
+    if (timestampDescription && timestampDescription.trim().length > 0) {
+      console.log(`[Groq AI Re-Parse] Parsing timestamp description for "${book.title}"...`);
+      detectedChapters = await parseChaptersFromDescriptionWithGroq(
+        timestampDescription,
+        book.totalDuration
+      );
+    } else if (manualTimestamps && Array.isArray(manualTimestamps)) {
+      detectedChapters = manualTimestamps.map((ts: any, idx: number) => {
+        const startSec = ts.startTimeSeconds || parseTimestampToSeconds(ts.startTime);
+        const nextTs = manualTimestamps[idx + 1];
+        const endSec = nextTs ? (nextTs.startTimeSeconds || parseTimestampToSeconds(nextTs.startTime)) : book.totalDuration;
+        return {
+          chapter_number: idx + 1,
+          title: ts.title || `Chapter ${idx + 1}`,
+          start_time: startSec,
+          end_time: endSec,
+        };
+      });
+    }
+
+    if (detectedChapters.length === 0) {
+      return res.status(400).json({ error: 'No valid chapter timestamps found in input.' });
+    }
+
+    const formattedChapters = detectedChapters.map((ch) => ({
+      id: `ch-${id}-${ch.chapter_number}`,
+      bookId: id,
+      chapterNumber: ch.chapter_number,
+      title: ch.title,
+      startTime: ch.start_time,
+      endTime: ch.end_time,
+      duration: Math.max(1, ch.end_time - ch.start_time),
+    }));
+
+    // Delete old chapters & insert new chapters into SQLite
+    const { getDb } = await import('../db/database');
+    const database = await getDb();
+    database.exec(`DELETE FROM chapters WHERE book_id = '${id}'`);
+
+    await insertChapters(formattedChapters);
+
+    // Save updated chapters.json to Cloudflare R2
+    await saveChaptersToR2(id, { book, chapters: formattedChapters });
+
+    const updatedChapters = await getChaptersForBook(id);
+    res.json({ success: true, chapters: updatedChapters });
+  } catch (err: any) {
+    console.error('Error updating chapters:', err);
+    res.status(500).json({ error: err.message || 'Failed to update chapters' });
+  }
+});
+
+// 5. GET /api/books/:id/audio (HTTP Range Audio Streaming Proxy)
 router.get('/books/:id/audio', async (req: Request, res: Response) => {
   try {
     const id = req.params.id as string;
@@ -354,13 +425,12 @@ function streamLocalFileRange(filePath: string, rangeHeader: string | undefined,
   res.setHeader('Content-Range', `bytes ${start}-${end}/${fileSize}`);
   res.setHeader('Accept-Ranges', 'bytes');
   res.setHeader('Content-Length', chunkSize);
-  res.setHeader('Content-[#Content-Type]', mimeType);
   res.setHeader('Content-Type', mimeType);
 
   fs.createReadStream(filePath, { start, end }).pipe(res);
 }
 
-// 5. GET /api/books/:id/cover (Cover Image Stream Proxy)
+// 6. GET /api/books/:id/cover (Cover Image Stream Proxy)
 router.get('/books/:id/cover', async (req: Request, res: Response) => {
   try {
     const id = req.params.id as string;
@@ -407,7 +477,7 @@ router.get('/books/:id/cover', async (req: Request, res: Response) => {
   }
 });
 
-// 6. PUT /api/books/:id/progress
+// 7. PUT /api/books/:id/progress
 router.put('/books/:id/progress', async (req: Request, res: Response) => {
   try {
     const id = req.params.id as string;
@@ -419,7 +489,7 @@ router.put('/books/:id/progress', async (req: Request, res: Response) => {
   }
 });
 
-// 7. POST /api/books/:id/favorite
+// 8. POST /api/books/:id/favorite
 router.post('/books/:id/favorite', async (req: Request, res: Response) => {
   try {
     const id = req.params.id as string;
@@ -430,7 +500,7 @@ router.post('/books/:id/favorite', async (req: Request, res: Response) => {
   }
 });
 
-// 8. DELETE /api/books/:id
+// 9. DELETE /api/books/:id
 router.delete('/books/:id', async (req: Request, res: Response) => {
   try {
     const id = req.params.id as string;
@@ -438,6 +508,7 @@ router.delete('/books/:id', async (req: Request, res: Response) => {
     if (book) {
       if (book.r2AudioKey) await deleteR2Item(book.r2AudioKey);
       if (book.r2CoverKey) await deleteR2Item(book.r2CoverKey);
+      await deleteR2Item(`audiobooks/${id}/chapters.json`);
 
       if (book.localFileName) {
         const localPath = path.join(uploadsDir, book.localFileName);
@@ -461,7 +532,7 @@ router.delete('/books/:id', async (req: Request, res: Response) => {
   }
 });
 
-// 9. GET /api/settings/r2-storage
+// 10. GET /api/settings/r2-storage
 router.get('/settings/r2-storage', async (_req: Request, res: Response) => {
   try {
     const info = await getR2StorageInfo();
@@ -471,7 +542,7 @@ router.get('/settings/r2-storage', async (_req: Request, res: Response) => {
   }
 });
 
-// 10. GET /api/settings/backup
+// 11. GET /api/settings/backup
 router.get('/settings/backup', async (_req: Request, res: Response) => {
   try {
     const backupData = await exportDatabaseJSON();

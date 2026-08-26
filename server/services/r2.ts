@@ -1,4 +1,4 @@
-import { S3Client, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
+import { S3Client, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand, ListObjectsV2Command, PutObjectCommand } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
 import { Response } from 'express';
 import fs from 'fs';
@@ -71,6 +71,59 @@ export async function uploadToR2(
 
   await upload.done();
   return key;
+}
+
+/**
+ * Save chapters JSON metadata file directly to Cloudflare R2
+ */
+export async function saveChaptersToR2(bookId: string, metadataPayload: any): Promise<void> {
+  if (!isR2Configured()) return;
+  try {
+    const s3 = getR2Client();
+    const bucket = getR2BucketName();
+    const key = `audiobooks/${bookId}/chapters.json`;
+    const jsonStr = JSON.stringify(metadataPayload, null, 2);
+
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: bucket,
+        Key: key,
+        Body: jsonStr,
+        ContentType: 'application/json',
+      })
+    );
+    console.log(`[R2 Metadata] Chapters metadata saved to Cloudflare R2: ${key}`);
+  } catch (err: any) {
+    console.warn(`[R2 Metadata Warning] Could not save chapters.json to R2:`, err.message || err);
+  }
+}
+
+/**
+ * Fetch chapters JSON metadata file from Cloudflare R2
+ */
+export async function fetchChaptersFromR2(bookId: string): Promise<any | null> {
+  if (!isR2Configured()) return null;
+  try {
+    const s3 = getR2Client();
+    const bucket = getR2BucketName();
+    const key = `audiobooks/${bookId}/chapters.json`;
+
+    const cmd = new GetObjectCommand({ Bucket: bucket, Key: key });
+    const response = await s3.send(cmd);
+
+    let stream = response.Body as any;
+    if (stream) {
+      const chunks: Buffer[] = [];
+      for await (const chunk of stream) {
+        chunks.push(Buffer.from(chunk));
+      }
+      const jsonText = Buffer.concat(chunks).toString('utf-8');
+      return JSON.parse(jsonText);
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -179,28 +232,61 @@ export async function syncBooksFromR2(): Promise<number> {
 
       const existing = await getBookById(bookId);
       if (!existing) {
-        // Extract raw title from key
-        const rawFileName = data.audioKey.split('/').pop() || '';
-        const titleClean = rawFileName
-          .replace(/^audio-book-\d+-/, '')
-          .replace(/\.mp3$/i, '')
-          .replace(/[-_]/g, ' ')
-          .trim() || 'Untitled Audiobook';
+        // Attempt reading chapters.json metadata from Cloudflare R2
+        const r2Metadata = await fetchChaptersFromR2(bookId);
 
-        const lower = titleClean.toLowerCase();
+        let titleClean = 'Untitled Audiobook';
         let authorGuess = 'Unknown Author';
-        if (lower.includes('seduction') || lower.includes('power') || lower.includes('48')) {
-          authorGuess = 'Robert Greene';
+        let descriptionGuess = 'Automatically synced & recovered from Cloudflare R2 Storage.';
+        let genreGuess = 'Self-Improvement';
+        let chaptersToUse: any[] = [];
+
+        if (r2Metadata && r2Metadata.book) {
+          titleClean = r2Metadata.book.title || titleClean;
+          authorGuess = r2Metadata.book.author || authorGuess;
+          descriptionGuess = r2Metadata.book.description || descriptionGuess;
+          genreGuess = r2Metadata.book.genre || genreGuess;
+        } else {
+          const rawFileName = data.audioKey.split('/').pop() || '';
+          titleClean = rawFileName
+            .replace(/^audio-book-\d+-/, '')
+            .replace(/\.mp3$/i, '')
+            .replace(/[-_]/g, ' ')
+            .trim() || 'Untitled Audiobook';
+
+          const lower = titleClean.toLowerCase();
+          if (lower.includes('seduction') || lower.includes('power') || lower.includes('48')) {
+            authorGuess = 'Robert Greene';
+          }
         }
 
-        const estDuration = Math.max(300, Math.floor(data.size / 24000)); // Estimated duration from size
+        const estDuration = r2Metadata?.book?.totalDuration || Math.max(300, Math.floor(data.size / 24000));
+
+        if (r2Metadata && Array.isArray(r2Metadata.chapters) && r2Metadata.chapters.length > 0) {
+          chaptersToUse = r2Metadata.chapters.map((ch: any) => ({
+            id: ch.id || `ch-${bookId}-${ch.chapterNumber}`,
+            bookId,
+            chapterNumber: ch.chapterNumber,
+            title: ch.title,
+            startTime: ch.startTime || 0,
+            endTime: ch.endTime || estDuration,
+            duration: ch.duration || Math.max(1, (ch.endTime || estDuration) - (ch.startTime || 0)),
+          }));
+        } else {
+          const chunkSize = Math.max(60, Math.floor(estDuration / 3));
+          chaptersToUse = [
+            { id: `ch-${bookId}-1`, bookId, chapterNumber: 1, title: 'Chapter 1: Introduction', startTime: 0, endTime: chunkSize, duration: chunkSize },
+            { id: `ch-${bookId}-2`, bookId, chapterNumber: 2, title: 'Chapter 2: Foundations', startTime: chunkSize, endTime: chunkSize * 2, duration: chunkSize },
+            { id: `ch-${bookId}-3`, bookId, chapterNumber: 3, title: 'Chapter 3: Advanced Concepts', startTime: chunkSize * 2, endTime: estDuration, duration: Math.max(1, estDuration - chunkSize * 2) },
+          ];
+        }
 
         const bookData = {
           id: bookId,
           title: titleClean,
           author: authorGuess,
-          description: `Automatically synced & recovered from Cloudflare R2 Storage.`,
-          genre: 'Self-Improvement',
+          description: descriptionGuess,
+          genre: genreGuess,
           language: 'English',
           r2AudioKey: data.audioKey,
           r2CoverKey: data.coverKey || null,
@@ -214,17 +300,10 @@ export async function syncBooksFromR2(): Promise<number> {
           updatedAt: new Date().toISOString(),
         };
 
-        const chunkSize = Math.max(60, Math.floor(estDuration / 3));
-        const defaultChapters = [
-          { id: `ch-${bookId}-1`, bookId, chapterNumber: 1, title: 'Chapter 1: Introduction', startTime: 0, endTime: chunkSize, duration: chunkSize },
-          { id: `ch-${bookId}-2`, bookId, chapterNumber: 2, title: 'Chapter 2: Foundations', startTime: chunkSize, endTime: chunkSize * 2, duration: chunkSize },
-          { id: `ch-${bookId}-3`, bookId, chapterNumber: 3, title: 'Chapter 3: Advanced Concepts', startTime: chunkSize * 2, endTime: estDuration, duration: Math.max(1, estDuration - chunkSize * 2) },
-        ];
-
         await insertBook(bookData);
-        await insertChapters(defaultChapters);
+        await insertChapters(chaptersToUse);
         syncedCount++;
-        console.log(`[R2 Auto-Sync] Automatically recovered book "${titleClean}" (${bookId}) from Cloudflare R2!`);
+        console.log(`[R2 Auto-Sync] Automatically recovered book "${titleClean}" (${bookId}) with ${chaptersToUse.length} chapters from Cloudflare R2!`);
       }
     }
 

@@ -6,7 +6,7 @@ import { useAudioPlayer } from '../context/AudioPlayerContext';
 import { useBooks } from '../hooks/useBooks';
 import { ChapterList } from '../components/ChapterList/ChapterList';
 import { fetchBookDetails, API_BASE, getCoverUrl } from '../lib/api';
-import { Play, Pause, Heart, ArrowLeft, Clock, Trash2, Globe } from 'lucide-react';
+import { Play, Pause, Heart, ArrowLeft, Clock, Trash2, Globe, Sparkles, FileText, CheckCircle2 } from 'lucide-react';
 
 export const BookDetails: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -17,6 +17,13 @@ export const BookDetails: React.FC = () => {
   const [book, setBook] = useState<Book | null>(null);
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+
+  // Chapter Edit / Groq AI Parsing Modal State
+  const [showChapterEdit, setShowChapterEdit] = useState<boolean>(false);
+  const [timestampText, setTimestampText] = useState<string>('');
+  const [updatingChapters, setUpdatingChapters] = useState<boolean>(false);
+  const [updateSuccess, setUpdateSuccess] = useState<boolean>(false);
+  const [updateError, setUpdateError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -51,6 +58,43 @@ export const BookDetails: React.FC = () => {
       console.error('Error loading book details:', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleUpdateChaptersSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!book || !timestampText.trim()) return;
+
+    setUpdatingChapters(true);
+    setUpdateError(null);
+    setUpdateSuccess(false);
+
+    try {
+      const url = API_BASE ? `${API_BASE}/api/books/${book.id}/chapters` : `/api/books/${book.id}/chapters`;
+      const res = await fetch(url, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ timestampDescription: timestampText }),
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || 'Failed to update chapters');
+      }
+
+      const data = await res.json();
+      if (data.chapters) {
+        setChapters(data.chapters);
+        setUpdateSuccess(true);
+        setTimeout(() => {
+          setUpdateSuccess(false);
+          setShowChapterEdit(false);
+        }, 1500);
+      }
+    } catch (err: any) {
+      setUpdateError(err.message || 'Failed to process chapters with Groq AI');
+    } finally {
+      setUpdatingChapters(false);
     }
   };
 
@@ -173,6 +217,14 @@ export const BookDetails: React.FC = () => {
             </button>
 
             <button
+              onClick={() => setShowChapterEdit((prev) => !prev)}
+              className="flex items-center gap-2 px-5 py-3.5 rounded-xl bg-[#181818] hover:bg-[#222222] border border-[#2D2D2D] text-white font-semibold text-sm transition-colors"
+            >
+              <Sparkles className="w-4 h-4 text-[#FFD600]" />
+              <span>Parse / Edit Chapters (Groq AI)</span>
+            </button>
+
+            <button
               onClick={() => toggleFavorite(book.id)}
               className={`flex items-center gap-2 px-5 py-3.5 rounded-xl border text-sm font-semibold transition-colors ${
                 book.isFavorite
@@ -194,6 +246,67 @@ export const BookDetails: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Chapter Edit / Groq AI Timestamp Description Form Box */}
+      {showChapterEdit && (
+        <div className="bg-[#0D0D0D] border border-[#FFD600]/40 rounded-3xl p-6 space-y-4 shadow-yellow-glow animate-in fade-in duration-200">
+          <div className="flex items-center justify-between">
+            <h3 className="font-bold text-white text-base flex items-center gap-2">
+              <FileText className="w-5 h-5 text-[#FFD600]" />
+              Parse Chapters from Timestamp Description (Groq AI)
+            </h3>
+            <button
+              onClick={() => setShowChapterEdit(false)}
+              className="text-xs text-gray-400 hover:text-white font-semibold"
+            >
+              Close
+            </button>
+          </div>
+
+          <p className="text-xs text-gray-400">
+            Paste any text description with timestamps (e.g. YouTube description, chapter list). Groq AI will parse exact timestamps and save them permanently to Cloudflare R2 & Database.
+          </p>
+
+          {updateError && (
+            <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-xs">
+              {updateError}
+            </div>
+          )}
+
+          {updateSuccess && (
+            <div className="p-3 rounded-xl bg-green-500/10 border border-green-500/30 text-green-400 text-xs flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4" /> Chapters updated & saved to Cloudflare R2 successfully!
+            </div>
+          )}
+
+          <form onSubmit={handleUpdateChaptersSubmit} className="space-y-4">
+            <textarea
+              rows={5}
+              value={timestampText}
+              onChange={(e) => setTimestampText(e.target.value)}
+              placeholder={`00:00 - Introduction & Preface\n03:15 - Chapter 1: The First Rule\n14:20 - Chapter 2: The Second Rule\n28:45 - Conclusion`}
+              className="w-full bg-[#141414] border border-[#282828] focus:border-[#FFD600] rounded-xl p-3.5 text-xs font-mono text-white focus:outline-none"
+            />
+
+            <button
+              type="submit"
+              disabled={updatingChapters || !timestampText.trim()}
+              className="w-full py-3.5 rounded-xl bg-[#FFD600] text-black font-extrabold text-sm shadow-yellow-sm hover:bg-[#FFE033] transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              {updatingChapters ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
+                  Parsing with Groq AI...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4" /> Parse & Update Chapters with Groq AI
+                </>
+              )}
+            </button>
+          </form>
+        </div>
+      )}
 
       {/* Chapters Section */}
       <ChapterList chapters={chapters} bookId={book.id} book={book} />
