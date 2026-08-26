@@ -16,9 +16,13 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
-// Initialize SQLite database
-getDb().then(() => {
+// Initialize SQLite database & R2 auto-sync
+getDb().then(async () => {
   console.log('🗄 SQLite Database initialized (server/data/audiobooks.db)');
+  const { syncBooksFromR2 } = await import('./services/r2');
+  syncBooksFromR2().then((c) => {
+    if (c > 0) console.log(`🎉 Recovered ${c} books from Cloudflare R2 bucket storage!`);
+  }).catch(() => {});
 }).catch((err) => {
   console.error('Failed to initialize SQLite Database:', err);
 });

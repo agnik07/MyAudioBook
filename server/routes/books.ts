@@ -22,6 +22,7 @@ import {
   isR2Configured,
   getR2Client,
   getR2BucketName,
+  syncBooksFromR2,
 } from '../services/r2';
 import { GetObjectCommand } from '@aws-sdk/client-s3';
 import { getAudioMetadata } from '../services/ffmpeg';
@@ -58,9 +59,12 @@ const upload = multer({
   limits: { fileSize: 1000 * 1024 * 1024 }, // 1GB limit
 });
 
-// 1. GET /api/books (Search, Filter, Sort)
+// 1. GET /api/books (Search, Filter, Sort + Cloudflare R2 Auto-Sync)
 router.get('/books', async (req: Request, res: Response) => {
   try {
+    // Automatically recover any books stored in Cloudflare R2 bucket
+    await syncBooksFromR2().catch(() => {});
+
     const { search, genre, filterBy, sortBy } = req.query;
     const books = await getAllBooks(
       search as string,
