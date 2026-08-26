@@ -7,6 +7,7 @@ import { BookGrid } from '../components/BookCard/BookGrid';
 import { formatDuration } from '../lib/utils';
 import { Play, Pause, Sparkles, BookOpen, Clock, Heart } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { API_BASE, getCoverUrl } from '../lib/api';
 
 export const Home: React.FC = () => {
   const navigate = useNavigate();
@@ -65,7 +66,7 @@ export const Home: React.FC = () => {
             {/* Book Cover */}
             <div className="relative group w-40 h-40 sm:w-48 sm:h-48 rounded-2xl overflow-hidden shadow-2xl border border-[#333333] flex-shrink-0">
               <img
-                src={continueListeningBook.coverUrl}
+                src={continueListeningBook.coverUrl?.startsWith('/api') && API_BASE ? `${API_BASE}${continueListeningBook.coverUrl}` : (continueListeningBook.coverUrl || getCoverUrl(continueListeningBook.id))}
                 alt={continueListeningBook.title}
                 className="w-full h-full object-cover"
               />
