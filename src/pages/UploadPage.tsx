@@ -6,6 +6,7 @@ import { ManualTimestampInput, ProcessingStep } from '../types/audiobook';
 import { ManualTimestampForm } from '../components/Upload/ManualTimestampForm';
 import { ProcessingStatusUI } from '../components/Upload/ProcessingStatusUI';
 import { Upload, Sparkles, Clock, FileAudio, ArrowLeft, AlertCircle } from 'lucide-react';
+import { API_BASE } from '../lib/api';
 
 export const UploadPage: React.FC = () => {
   const navigate = useNavigate();
@@ -88,8 +89,9 @@ export const UploadPage: React.FC = () => {
       }
 
       // XHR request to monitor upload progress percentage
+      const uploadEndpoint = API_BASE ? `${API_BASE}/api/books/upload` : '/api/books/upload';
       const xhr = new XMLHttpRequest();
-      xhr.open('POST', '/api/books/upload', true);
+      xhr.open('POST', uploadEndpoint, true);
 
       xhr.upload.onprogress = (event) => {
         if (event.lengthComputable) {

@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { Profile } from '../types/audiobook';
+import { API_BASE } from '../lib/api';
 
 interface AuthContextType {
   user: { id: string; email: string } | null;
@@ -34,7 +35,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     // Check auth me endpoint
-    fetch('/api/auth/me')
+    const url = API_BASE ? `${API_BASE}/api/auth/me` : '/api/auth/me';
+    fetch(url)
       .then((res) => res.json())
       .then((data) => {
         if (data.user) {
@@ -56,7 +58,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const signInWithEmail = async (email: string, _password = 'password') => {
     setLoading(true);
     try {
-      const res = await fetch('/api/auth/login', {
+      const url = API_BASE ? `${API_BASE}/api/auth/login` : '/api/auth/login';
+      const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email }),
@@ -85,7 +88,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const signOut = async () => {
-    await fetch('/api/auth/logout', { method: 'POST' });
+    const url = API_BASE ? `${API_BASE}/api/auth/logout` : '/api/auth/logout';
+    await fetch(url, { method: 'POST' }).catch(() => {});
     setUser(null);
     setProfile(null);
   };
