@@ -49,7 +49,7 @@ export const Settings: React.FC = () => {
 
         <div className="flex items-center gap-4 pt-2">
           <img
-            src={profile?.avatarUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80'}
+            src={profile?.avatarUrl || 'https://lh3.googleusercontent.com/d/10kSKYFbbCz4yTiBJY4ue2gBt0aiH1X-l'}
             alt="Avatar"
             className="w-16 h-16 rounded-full object-cover border-2 border-[#FFD600]"
           />
@@ -127,11 +127,10 @@ export const Settings: React.FC = () => {
                 <button
                   key={speed}
                   onClick={() => setRate(speed)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                    playbackRate === speed
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${playbackRate === speed
                       ? 'bg-[#FFD600] text-black shadow-yellow-sm'
                       : 'bg-[#141414] hover:bg-[#1C1C1C] text-gray-400 hover:text-white border border-[#222222]'
-                  }`}
+                    }`}
                 >
                   {speed}x
                 </button>
