@@ -2,9 +2,26 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Book, FilterState, Chapter } from '../types/audiobook';
 import { fetchBooks, toggleFavoriteApi, deleteBookApi } from '../lib/api';
 
+const LOCAL_CACHE_KEY = 'cached_audiobooks_list';
+
 export function useBooks() {
-  const [books, setBooks] = useState<Book[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
+  // Initialize state from local cache for instant 0ms initial render
+  const [books, setBooks] = useState<Book[]>(() => {
+    try {
+      const cached = localStorage.getItem(LOCAL_CACHE_KEY);
+      if (cached) return JSON.parse(cached);
+    } catch (e) {}
+    return [];
+  });
+
+  const [loading, setLoading] = useState<boolean>(() => {
+    try {
+      const cached = localStorage.getItem(LOCAL_CACHE_KEY);
+      if (cached && JSON.parse(cached).length > 0) return false;
+    } catch (e) {}
+    return true;
+  });
+
   const [filters, setFilters] = useState<FilterState>({
     search: '',
     genre: '',
@@ -13,8 +30,6 @@ export function useBooks() {
   });
 
   const loadBooks = useCallback(async () => {
-    setLoading(true);
-
     try {
       const serverBooks = await fetchBooks({
         search: filters.search,
@@ -34,7 +49,11 @@ export function useBooks() {
         if (!combinedMap.has(b.id)) combinedMap.set(b.id, b);
       });
 
-      setBooks(Array.from(combinedMap.values()));
+      const finalBooks = Array.from(combinedMap.values());
+
+      setBooks(finalBooks);
+      // Cache fresh books list for instant next load
+      localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(finalBooks));
     } catch (err) {
       console.warn('Backend API connection warning, reading local cache:', err);
       const savedUserBooksRaw = localStorage.getItem('audiobook_custom_books') || '[]';
@@ -55,9 +74,11 @@ export function useBooks() {
 
     const newFavState = !targetBook.isFavorite;
 
-    setBooks((prev) =>
-      prev.map((b) => (b.id === bookId ? { ...b, isFavorite: newFavState } : b))
-    );
+    setBooks((prev) => {
+      const updated = prev.map((b) => (b.id === bookId ? { ...b, isFavorite: newFavState } : b));
+      localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(updated));
+      return updated;
+    });
 
     try {
       await toggleFavoriteApi(bookId);
@@ -67,7 +88,11 @@ export function useBooks() {
   };
 
   const deleteBook = async (bookId: string) => {
-    setBooks((prev) => prev.filter((b) => b.id !== bookId));
+    setBooks((prev) => {
+      const filtered = prev.filter((b) => b.id !== bookId);
+      localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(filtered));
+      return filtered;
+    });
 
     // Remove from custom local storage cache
     const savedUserBooksRaw = localStorage.getItem('audiobook_custom_books');
@@ -85,7 +110,11 @@ export function useBooks() {
   };
 
   const addBook = (newBook: Book, _chapters?: Chapter[]) => {
-    setBooks((prev) => [newBook, ...prev]);
+    setBooks((prev) => {
+      const updated = [newBook, ...prev];
+      localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(updated));
+      return updated;
+    });
 
     const savedUserBooksRaw = localStorage.getItem('audiobook_custom_books') || '[]';
     const customBooks: Book[] = JSON.parse(savedUserBooksRaw);

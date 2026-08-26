@@ -62,16 +62,28 @@ const upload = multer({
 // 1. GET /api/books (Search, Filter, Sort + Cloudflare R2 Auto-Sync)
 router.get('/books', async (req: Request, res: Response) => {
   try {
-    // Automatically recover any books stored in Cloudflare R2 bucket
-    await syncBooksFromR2().catch(() => {});
-
     const { search, genre, filterBy, sortBy } = req.query;
-    const books = await getAllBooks(
+    let books = await getAllBooks(
       search as string,
       genre as string,
       filterBy as string,
       sortBy as string
     );
+
+    if (books.length === 0) {
+      // If DB is empty, run blocking R2 recovery
+      await syncBooksFromR2().catch(() => {});
+      books = await getAllBooks(
+        search as string,
+        genre as string,
+        filterBy as string,
+        sortBy as string
+      );
+    } else {
+      // Background non-blocking R2 sync
+      syncBooksFromR2().catch(() => {});
+    }
+
     res.json({ books });
   } catch (err: any) {
     console.error('Error fetching books:', err);

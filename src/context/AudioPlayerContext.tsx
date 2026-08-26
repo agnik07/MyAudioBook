@@ -62,7 +62,7 @@ export const AudioPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
       setCurrentTime(time);
       setDuration(audio.duration || 0);
 
-      // Auto-sync currentChapter if audio currentTime has entered a different chapter range
+      // Auto-sync currentChapter if audio currentTime enters a different chapter range
       if (chapters.length > 0) {
         const matchingCh = chapters.find(
           (c) => time >= c.startTime && (c.endTime > c.startTime ? time < c.endTime : true)
@@ -81,8 +81,9 @@ export const AudioPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const handleLoadedMetadata = () => {
       setDuration(audio.duration || 0);
       if (pendingSeekTimeRef.current !== null) {
-        audio.currentTime = pendingSeekTimeRef.current;
-        setCurrentTime(pendingSeekTimeRef.current);
+        const seekTarget = pendingSeekTimeRef.current;
+        audio.currentTime = seekTarget;
+        setCurrentTime(seekTarget);
         pendingSeekTimeRef.current = null;
       }
     };
@@ -138,7 +139,7 @@ export const AudioPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const completed = duration > 0 && currentTime >= duration - 3;
     const positionSec = Math.floor(currentTime);
 
-    // Save locally
+    // Save locally to localStorage progress cache
     const stored = localStorage.getItem('audiobook_progress') || '{}';
     const parsed = JSON.parse(stored);
     parsed[currentBook.id] = {
@@ -185,9 +186,42 @@ export const AudioPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
     setChapters(bookChapters);
 
-    let targetChapter = bookChapters.find((c) => c.id === chapterId);
-    if (!targetChapter && book.currentChapterId) {
-      targetChapter = bookChapters.find((c) => c.id === book.currentChapterId);
+    // Determine exact saved playback position & chapter
+    let savedPos: number | undefined = startPosition;
+    let savedChapterId = chapterId || book.currentChapterId;
+
+    if (savedPos === undefined) {
+      try {
+        const stored = localStorage.getItem('audiobook_progress');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          const prog = parsed[book.id];
+          if (prog) {
+            if (typeof prog.positionSeconds === 'number' && prog.positionSeconds > 0) {
+              savedPos = prog.positionSeconds;
+            }
+            if (prog.chapterId && !savedChapterId) {
+              savedChapterId = prog.chapterId;
+            }
+          }
+        }
+      } catch (e) {}
+    }
+
+    if (savedPos === undefined && typeof book.lastPositionSeconds === 'number' && book.lastPositionSeconds > 0) {
+      savedPos = book.lastPositionSeconds;
+    }
+
+    const targetPos = savedPos ?? 0;
+
+    let targetChapter: Chapter | undefined;
+    if (savedChapterId) {
+      targetChapter = bookChapters.find((c) => c.id === savedChapterId);
+    }
+    if (!targetChapter && targetPos > 0) {
+      targetChapter = bookChapters.find(
+        (c) => targetPos >= c.startTime && (c.endTime > c.startTime ? targetPos < c.endTime : true)
+      );
     }
     if (!targetChapter && bookChapters.length > 0) {
       targetChapter = bookChapters[0];
@@ -196,8 +230,6 @@ export const AudioPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const audioStreamUrl = getAudioStreamUrl(book.id);
 
     if (audioRef.current) {
-      const targetPos = startPosition ?? (targetChapter ? targetChapter.startTime : 0) ?? book.lastPositionSeconds ?? 0;
-
       if (!audioRef.current.src.includes(audioStreamUrl)) {
         pendingSeekTimeRef.current = targetPos;
         audioRef.current.src = audioStreamUrl;
