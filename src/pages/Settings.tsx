@@ -3,12 +3,13 @@ import { useAuth } from '../context/AuthContext';
 import { useAudioPlayer } from '../context/AudioPlayerContext';
 import { PlaybackSpeed } from '../types/audiobook';
 import { fetchR2StorageInfo } from '../lib/api';
-import { User, LogOut, HardDrive, Gauge, ShieldCheck, Download, AlertTriangle, Check } from 'lucide-react';
+import { User, LogOut, HardDrive, Gauge, ShieldCheck, Download, AlertTriangle, Check, Upload, Camera } from 'lucide-react';
 
 export const Settings: React.FC = () => {
-  const { profile, signOut } = useAuth();
+  const { profile, signOut, updateProfileAvatar } = useAuth();
   const { playbackRate, setRate } = useAudioPlayer();
 
+  const [avatarUrlInput, setAvatarUrlInput] = useState<string>('');
   const [storageInfo, setStorageInfo] = useState<{
     configured: boolean;
     bucketName: string;
@@ -20,6 +21,40 @@ export const Settings: React.FC = () => {
   useEffect(() => {
     fetchR2StorageInfo().then(setStorageInfo).catch(console.error);
   }, []);
+
+  const handleAvatarFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (typeof reader.result === 'string') {
+          updateProfileAvatar(reader.result);
+          setSavedSuccess(true);
+          setTimeout(() => setSavedSuccess(false), 2000);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleAvatarUrlSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    let url = avatarUrlInput.trim();
+    if (!url) return;
+
+    // Convert Google Drive view URL to direct image URL if needed
+    if (url.includes('drive.google.com/file/d/')) {
+      const match = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
+      if (match && match[1]) {
+        url = `https://lh3.googleusercontent.com/d/${match[1]}`;
+      }
+    }
+
+    updateProfileAvatar(url);
+    setAvatarUrlInput('');
+    setSavedSuccess(true);
+    setTimeout(() => setSavedSuccess(false), 2000);
+  };
 
   const handleSave = () => {
     setSavedSuccess(true);
@@ -37,27 +72,77 @@ export const Settings: React.FC = () => {
           Settings & <span className="text-[#FFD600]">Preferences</span>
         </h1>
         <p className="text-sm text-gray-400 mt-1">
-          Manage your Cloudflare R2 Storage, SQLite database backup, and audio defaults.
+          Manage your profile picture, Cloudflare R2 Storage, SQLite backup, and audio defaults.
         </p>
       </div>
 
-      {/* User Profile Card */}
-      <div className="bg-[#0D0D0D] border border-[#1F1F1F] rounded-2xl p-6 space-y-4 shadow-lg">
+      {/* User Profile & Avatar Card */}
+      <div className="bg-[#0D0D0D] border border-[#1F1F1F] rounded-2xl p-6 space-y-5 shadow-lg">
         <h3 className="font-bold text-white text-base flex items-center gap-2">
-          <User className="w-5 h-5 text-[#FFD600]" /> Profile
+          <User className="w-5 h-5 text-[#FFD600]" /> Profile & Avatar
         </h3>
 
-        <div className="flex items-center gap-4 pt-2">
-          <img
-            src={profile?.avatarUrl || 'https://lh3.googleusercontent.com/d/10kSKYFbbCz4yTiBJY4ue2gBt0aiH1X-l'}
-            alt="Avatar"
-            className="w-16 h-16 rounded-full object-cover border-2 border-[#FFD600]"
-          />
-          <div>
-            <h4 className="font-bold text-white text-lg">{profile?.displayName || 'Agnik Dutta'}</h4>
-            <p className="text-xs text-gray-400 font-mono">Single-User Private Mode</p>
+        <div className="flex flex-col sm:flex-row items-center gap-5 pt-1">
+          <div className="relative group">
+            <img
+              src={profile?.avatarUrl || 'https://lh3.googleusercontent.com/d/10kSKYFbbCz4yTiBJY4ue2gBt0aiH1X-l'}
+              alt="Avatar"
+              className="w-20 h-20 rounded-full object-cover border-2 border-[#FFD600] shadow-yellow-sm"
+            />
+            <label className="absolute inset-0 bg-black/60 rounded-full flex flex-col items-center justify-center text-white opacity-0 group-hover:opacity-100 cursor-pointer transition-opacity">
+              <Camera className="w-5 h-5 text-[#FFD600]" />
+              <span className="text-[9px] font-bold mt-0.5">Upload</span>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handleAvatarFileUpload}
+                className="hidden"
+              />
+            </label>
+          </div>
+
+          <div className="space-y-3 flex-1 text-center sm:text-left">
+            <div>
+              <h4 className="font-bold text-white text-lg">{profile?.displayName || 'Agnik Dutta'}</h4>
+              <p className="text-xs text-gray-400 font-mono">Single-User Private Sanctuary</p>
+            </div>
+
+            {/* Quick Upload Button */}
+            <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
+              <label className="cursor-pointer inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#FFD600] text-black text-xs font-extrabold hover:bg-[#FFE033] shadow-yellow-sm transition-all">
+                <Upload className="w-3.5 h-3.5" /> Upload Image File
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handleAvatarFileUpload}
+                  className="hidden"
+                />
+              </label>
+            </div>
           </div>
         </div>
+
+        {/* Change Image URL Option */}
+        <form onSubmit={handleAvatarUrlSubmit} className="pt-2 border-t border-[#1C1C1C] space-y-2">
+          <label className="block text-xs font-semibold text-gray-400">
+            Or Paste Custom Image / Google Drive URL
+          </label>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={avatarUrlInput}
+              onChange={(e) => setAvatarUrlInput(e.target.value)}
+              placeholder="e.g. https://drive.google.com/file/d/10kSKYFbb.../view"
+              className="flex-1 bg-[#141414] border border-[#262626] focus:border-[#FFD600] rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
+            />
+            <button
+              type="submit"
+              className="px-4 py-2 rounded-xl bg-[#1F1F1F] hover:bg-[#2A2A2A] border border-[#333] text-xs font-bold text-white transition-colors"
+            >
+              Update
+            </button>
+          </div>
+        </form>
       </div>
 
       {/* Cloudflare R2 Storage Management */}
@@ -127,10 +212,11 @@ export const Settings: React.FC = () => {
                 <button
                   key={speed}
                   onClick={() => setRate(speed)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${playbackRate === speed
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                    playbackRate === speed
                       ? 'bg-[#FFD600] text-black shadow-yellow-sm'
                       : 'bg-[#141414] hover:bg-[#1C1C1C] text-gray-400 hover:text-white border border-[#222222]'
-                    }`}
+                  }`}
                 >
                   {speed}x
                 </button>

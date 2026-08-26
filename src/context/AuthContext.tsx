@@ -11,7 +11,10 @@ interface AuthContextType {
   signUpWithEmail: (email: string, password?: string, displayName?: string) => Promise<void>;
   signOut: () => Promise<void>;
   toggleDemoMode: () => void;
+  updateProfileAvatar: (url: string) => void;
 }
+
+const DEFAULT_AVATAR = 'https://lh3.googleusercontent.com/d/10kSKYFbbCz4yTiBJY4ue2gBt0aiH1X-l';
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
@@ -21,11 +24,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   });
 
   const [profile, setProfile] = useState<Profile | null>(() => {
+    const savedAvatar = localStorage.getItem('user_avatar_url');
     return {
       id: 'user-owner',
       userId: 'user-owner',
       displayName: 'Agnik Dutta',
-      avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80',
+      avatarUrl: savedAvatar || DEFAULT_AVATAR,
       createdAt: new Date().toISOString(),
     };
   });
@@ -40,12 +44,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       .then((res) => res.json())
       .then((data) => {
         if (data.user) {
+          const savedAvatar = localStorage.getItem('user_avatar_url');
           setUser({ id: data.user.id, email: data.user.email });
           setProfile({
             id: data.user.id,
             userId: data.user.id,
             displayName: data.user.displayName,
-            avatarUrl: data.user.avatarUrl,
+            avatarUrl: savedAvatar || data.user.avatarUrl || DEFAULT_AVATAR,
             createdAt: new Date().toISOString(),
           });
         }
@@ -54,6 +59,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         /* fallback local user */
       });
   }, []);
+
+  const updateProfileAvatar = (url: string) => {
+    localStorage.setItem('user_avatar_url', url);
+    setProfile((prev) => (prev ? { ...prev, avatarUrl: url } : null));
+  };
 
   const signInWithEmail = async (email: string, _password = 'password') => {
     setLoading(true);
@@ -66,12 +76,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
       const data = await res.json();
       if (data.user) {
+        const savedAvatar = localStorage.getItem('user_avatar_url');
         setUser({ id: data.user.id, email: data.user.email });
         setProfile({
           id: data.user.id,
           userId: data.user.id,
           displayName: data.user.displayName,
-          avatarUrl: data.user.avatarUrl,
+          avatarUrl: savedAvatar || data.user.avatarUrl || DEFAULT_AVATAR,
           createdAt: new Date().toISOString(),
         });
       }
@@ -109,6 +120,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         signUpWithEmail,
         signOut,
         toggleDemoMode,
+        updateProfileAvatar,
       }}
     >
       {children}
