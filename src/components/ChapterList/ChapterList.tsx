@@ -74,16 +74,23 @@ export const ChapterList: React.FC<ChapterListProps> = ({ chapters, bookId, book
                   >
                     {chapter.title}
                   </h4>
-                  <p className="text-xs text-gray-500 font-mono">
-                    Chapter {chapter.chapterNumber}
-                  </p>
+                  {chapter.title.toLowerCase() !== `chapter ${chapter.chapterNumber}` && (
+                    <p className="text-xs text-gray-500 font-mono">
+                      Chapter {chapter.chapterNumber}
+                    </p>
+                  )}
                 </div>
               </div>
 
-              {/* Duration */}
-              <span className="text-xs font-mono font-medium text-gray-400 group-hover:text-white flex-shrink-0 ml-4">
-                {formatTime(chapter.duration)}
-              </span>
+              {/* Start Timestamp & Duration */}
+              <div className="flex flex-col items-end flex-shrink-0 ml-4">
+                <span className="text-xs font-mono font-bold text-white group-hover:text-[#FFD600]">
+                  {formatTime(chapter.startTime)}
+                </span>
+                <span className="text-[10px] font-mono text-gray-500">
+                  Duration {formatTime(chapter.duration)}
+                </span>
+              </div>
             </div>
           );
         })}

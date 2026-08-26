@@ -13,6 +13,8 @@ interface AudioPlayerContextType {
   volume: number;
   isMuted: boolean;
   isExpanded: boolean;
+  timeMode: 'chapter' | 'book';
+  toggleTimeMode: () => void;
   playBook: (book: Book, chapterId?: string, startPosition?: number, customChapters?: Chapter[]) => Promise<void>;
   playChapter: (chapter: Chapter, targetBook?: Book) => void;
   togglePlayPause: () => void;
@@ -44,6 +46,11 @@ export const AudioPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const [volume, setVolume] = useState<number>(1);
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [isExpanded, setIsExpanded] = useState<boolean>(false);
+  const [timeMode, setTimeMode] = useState<'chapter' | 'book'>('chapter');
+
+  const toggleTimeMode = () => {
+    setTimeMode((prev) => (prev === 'chapter' ? 'book' : 'chapter'));
+  };
 
   // Synchronize audio element events
   useEffect(() => {
@@ -51,11 +58,22 @@ export const AudioPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
     if (!audio) return;
 
     const handleTimeUpdate = () => {
-      setCurrentTime(audio.currentTime);
+      const time = audio.currentTime;
+      setCurrentTime(time);
       setDuration(audio.duration || 0);
 
+      // Auto-sync currentChapter if audio currentTime has entered a different chapter range
+      if (chapters.length > 0) {
+        const matchingCh = chapters.find(
+          (c) => time >= c.startTime && (c.endTime > c.startTime ? time < c.endTime : true)
+        );
+        if (matchingCh && (!currentChapter || matchingCh.id !== currentChapter.id)) {
+          setCurrentChapter(matchingCh);
+        }
+      }
+
       // Auto-advance chapter when current chapter end time reached
-      if (currentChapter && currentChapter.endTime > 0 && audio.currentTime >= currentChapter.endTime) {
+      if (currentChapter && currentChapter.endTime > 0 && time >= currentChapter.endTime) {
         handleAutoAdvance();
       }
     };
@@ -345,6 +363,8 @@ export const AudioPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
         volume,
         isMuted,
         isExpanded,
+        timeMode,
+        toggleTimeMode,
         playBook,
         playChapter,
         togglePlayPause,

@@ -28,6 +28,8 @@ export const PersistentPlayer: React.FC = () => {
     volume,
     isMuted,
     isExpanded,
+    timeMode,
+    toggleTimeMode,
     togglePlayPause,
     seekTo,
     skipForward,
@@ -45,21 +47,36 @@ export const PersistentPlayer: React.FC = () => {
     return null; // Hide player if no book loaded
   }
 
-  const progressPercentage = duration > 0 ? (currentTime / duration) * 100 : 0;
+  const chStart = currentChapter.startTime || 0;
+  const chEnd = currentChapter.endTime > 0 ? currentChapter.endTime : (duration || chStart + 1);
+  const chDuration = Math.max(1, currentChapter.duration || (chEnd - chStart));
+  const chCurrentTime = Math.max(0, Math.min(chDuration, currentTime - chStart));
+
+  const isChapterMode = timeMode === 'chapter';
+  const activeCurrentTime = isChapterMode ? chCurrentTime : currentTime;
+  const activeDuration = isChapterMode ? chDuration : (duration || 100);
+  const progressPercentage = activeDuration > 0 ? (activeCurrentTime / activeDuration) * 100 : 0;
 
   return (
     <>
       {/* DESKTOP & MOBILE MINI PLAYER (Sticky at Bottom) */}
       <div className="fixed bottom-14 md:bottom-0 left-0 right-0 z-40 bg-[#0D0D0D]/95 backdrop-blur-xl border-t border-[#1F1F1F] text-white shadow-2xl transition-all duration-300">
         {/* Top Seek Progress Line (Thin accent line on player border) */}
-        <div className="relative w-full h-1 bg-[#1A1A1A] cursor-pointer group" onClick={(e) => {
-          const rect = e.currentTarget.getBoundingClientRect();
-          const clickPos = (e.clientX - rect.left) / rect.width;
-          seekTo(clickPos * duration);
-        }}>
+        <div
+          className="relative w-full h-1 bg-[#1A1A1A] cursor-pointer group"
+          onClick={(e) => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            const clickPos = (e.clientX - rect.left) / rect.width;
+            if (isChapterMode) {
+              seekTo(chStart + clickPos * chDuration);
+            } else {
+              seekTo(clickPos * (duration || 100));
+            }
+          }}
+        >
           <div
             className="h-full bg-[#FFD600] group-hover:bg-[#FFE033] transition-all relative"
-            style={{ width: `${progressPercentage}%` }}
+            style={{ width: `${Math.min(100, Math.max(0, progressPercentage))}%` }}
           >
             <div className="absolute right-0 top-1/2 -translate-y-1/2 w-3 h-3 bg-[#FFD600] rounded-full shadow-yellow-sm opacity-0 group-hover:opacity-100 transition-opacity" />
           </div>
@@ -143,17 +160,31 @@ export const PersistentPlayer: React.FC = () => {
             </div>
 
             {/* Time Slider */}
-            <div className="w-full flex items-center gap-2.5 text-xs text-gray-400 font-mono">
-              <span className="w-10 text-right">{formatTime(currentTime)}</span>
+            <div className="w-full flex items-center gap-2 text-xs text-gray-400 font-mono">
+              <span className="w-11 text-right">{formatTime(activeCurrentTime)}</span>
               <input
                 type="range"
                 min="0"
-                max={duration || 100}
-                value={currentTime}
-                onChange={(e) => seekTo(parseFloat(e.target.value))}
+                max={activeDuration}
+                value={activeCurrentTime}
+                onChange={(e) => {
+                  const val = parseFloat(e.target.value);
+                  if (isChapterMode) {
+                    seekTo(chStart + val);
+                  } else {
+                    seekTo(val);
+                  }
+                }}
                 className="flex-1 accent-[#FFD600] h-1.5 rounded-lg bg-[#262626] cursor-pointer"
               />
-              <span className="w-10">{formatTime(duration)}</span>
+              <span className="w-11">{formatTime(activeDuration)}</span>
+              <button
+                onClick={toggleTimeMode}
+                className="text-[10px] font-sans font-bold px-1.5 py-0.5 rounded bg-[#1C1C1C] hover:bg-[#282828] text-[#FFD600] border border-[#2D2D2D] transition-colors ml-1 flex-shrink-0"
+                title="Toggle between Chapter Time and Full Book Time"
+              >
+                {isChapterMode ? 'Chapter' : 'Book'}
+              </button>
             </div>
           </div>
 
@@ -226,18 +257,31 @@ export const PersistentPlayer: React.FC = () => {
           {/* Player Seek & Controls */}
           <div className="w-full max-w-md mx-auto space-y-6 pb-6">
             {/* Seek Bar */}
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               <input
                 type="range"
                 min="0"
-                max={duration || 100}
-                value={currentTime}
-                onChange={(e) => seekTo(parseFloat(e.target.value))}
+                max={activeDuration}
+                value={activeCurrentTime}
+                onChange={(e) => {
+                  const val = parseFloat(e.target.value);
+                  if (isChapterMode) {
+                    seekTo(chStart + val);
+                  } else {
+                    seekTo(val);
+                  }
+                }}
                 className="w-full accent-[#FFD600] h-2 rounded-lg bg-[#262626] cursor-pointer"
               />
               <div className="flex items-center justify-between text-xs text-gray-400 font-mono">
-                <span>{formatTime(currentTime)}</span>
-                <span>{formatTime(duration)}</span>
+                <span>{formatTime(activeCurrentTime)}</span>
+                <button
+                  onClick={toggleTimeMode}
+                  className="text-[10px] font-sans font-bold px-2 py-0.5 rounded bg-[#1C1C1C] text-[#FFD600] border border-[#2D2D2D]"
+                >
+                  {isChapterMode ? 'Chapter Time' : 'Full Book Time'}
+                </button>
+                <span>{formatTime(activeDuration)}</span>
               </div>
             </div>
 
@@ -297,7 +341,7 @@ export const PersistentPlayer: React.FC = () => {
                   }`}
                 >
                   <span className="truncate">{ch.title}</span>
-                  <span className="ml-2 font-mono opacity-80">{formatTime(ch.duration)}</span>
+                  <span className="ml-2 font-mono opacity-80">{formatTime(ch.startTime)} ({formatTime(ch.duration)})</span>
                 </button>
               ))}
             </div>
