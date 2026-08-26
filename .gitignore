@@ -1,0 +1,12 @@
+node_modules
+dist
+dist-ssr
+*.local
+.env
+.env.production
+.DS_Store
+uploads
+temp
+server/data/*.db
+server/data/*.db-wal
+server/data/*.db-shm
