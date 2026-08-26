@@ -14,6 +14,7 @@ import {
   Maximize2,
   ListMusic,
 } from 'lucide-react';
+import { API_BASE, getCoverUrl } from '../../lib/api';
 
 export const PersistentPlayer: React.FC = () => {
   const {
@@ -72,7 +73,7 @@ export const PersistentPlayer: React.FC = () => {
           >
             <div className="relative group flex-shrink-0">
               <img
-                src={currentBook.coverUrl}
+                src={currentBook.coverUrl?.startsWith('/api') && API_BASE ? `${API_BASE}${currentBook.coverUrl}` : (currentBook.coverUrl || getCoverUrl(currentBook.id))}
                 alt={currentBook.title}
                 className="w-12 h-12 rounded-lg object-cover border border-[#262626] shadow-md"
               />
@@ -209,7 +210,7 @@ export const PersistentPlayer: React.FC = () => {
           <div className="my-auto py-6 flex flex-col items-center">
             <div className="relative w-64 h-64 sm:w-72 sm:h-72 rounded-2xl overflow-hidden shadow-2xl border border-[#262626]">
               <img
-                src={currentBook.coverUrl}
+                src={currentBook.coverUrl?.startsWith('/api') && API_BASE ? `${API_BASE}${currentBook.coverUrl}` : (currentBook.coverUrl || getCoverUrl(currentBook.id))}
                 alt={currentBook.title}
                 className="w-full h-full object-cover"
               />

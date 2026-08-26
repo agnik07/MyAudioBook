@@ -25,7 +25,12 @@ import {
 } from '../services/r2';
 import { GetObjectCommand } from '@aws-sdk/client-s3';
 import { getAudioMetadata } from '../services/ffmpeg';
-import { transcribeAudioWithGroq, detectChaptersWithGroq } from '../services/groq';
+import {
+  transcribeAudioWithGroq,
+  detectChaptersWithGroq,
+  parseChaptersFromDescriptionWithGroq,
+  parseTimestampDescriptionRegex,
+} from '../services/groq';
 
 function parseTimestampToSeconds(timestamp: string): number {
   if (!timestamp) return 0;
@@ -84,7 +89,7 @@ router.get('/books/:id', async (req: Request, res: Response) => {
   }
 });
 
-// 3. POST /api/books/upload (Cloudflare R2 Upload + Local Fallback + Groq AI / Manual Chapters)
+// 3. POST /api/books/upload (Cloudflare R2 Upload + Groq AI Description Parsing / Audio Transcription)
 router.post(
   '/books/upload',
   upload.fields([
@@ -109,6 +114,7 @@ router.post(
         language = 'English',
         detectionMode = 'ai',
         manualTimestamps = '[]',
+        timestampDescription = '',
       } = req.body;
 
       console.log(`[Upload] Processing "${title}" by ${author}...`);
@@ -128,6 +134,13 @@ router.post(
       let r2CoverKey: string | null = null;
       let localCoverName: string | null = null;
 
+      // Handle cover file if uploaded
+      if (coverFile) {
+        localCoverName = `${bookId}-cover-${coverFile.originalname.replace(/\s+/g, '_')}`;
+        const permanentCoverPath = path.join(uploadsDir, localCoverName);
+        fs.copyFileSync(coverFile.path, permanentCoverPath);
+      }
+
       // 1. Upload to Cloudflare R2 Bucket if configured
       if (isR2Configured()) {
         try {
@@ -136,11 +149,8 @@ router.post(
           await uploadToR2(r2AudioKey, permanentLocalAudioPath, 'audio/mpeg');
           console.log(`[R2 Storage] Audio successfully uploaded to R2: ${r2AudioKey}`);
 
-          if (coverFile) {
-            localCoverName = `${bookId}-cover-${coverFile.originalname.replace(/\s+/g, '_')}`;
+          if (coverFile && localCoverName) {
             const permanentCoverPath = path.join(uploadsDir, localCoverName);
-            fs.copyFileSync(coverFile.path, permanentCoverPath);
-
             r2CoverKey = `audiobooks/${bookId}/cover-${localCoverName}`;
             await uploadToR2(r2CoverKey, permanentCoverPath, coverFile.mimetype || 'image/jpeg');
             console.log(`[R2 Storage] Cover image uploaded to R2: ${r2CoverKey}`);
@@ -148,15 +158,9 @@ router.post(
         } catch (r2Err: any) {
           console.warn('[R2 Storage Warning] Failed to upload to R2, relying on local fallback:', r2Err.message || r2Err);
         }
-      } else {
-        console.log('[R2 Storage Info] Cloudflare R2 credentials not fully set. Saving to local storage fallback.');
-        if (coverFile) {
-          localCoverName = `${bookId}-cover-${coverFile.originalname.replace(/\s+/g, '_')}`;
-          fs.copyFileSync(coverFile.path, path.join(uploadsDir, localCoverName));
-        }
       }
 
-      // 2. Chapter Detection (Manual or Groq AI)
+      // 2. Chapter Detection Logic
       let detectedChapters: Array<{
         chapter_number: number;
         title: string;
@@ -164,7 +168,14 @@ router.post(
         end_time: number;
       }> = [];
 
-      if (detectionMode === 'manual') {
+      if (detectionMode === 'description' || timestampDescription.trim().length > 0) {
+        // Parse single timestamp description with Groq AI LLM & regex fallback
+        console.log('[Groq AI] Parsing chapter timestamps from user description text...');
+        detectedChapters = await parseChaptersFromDescriptionWithGroq(
+          timestampDescription,
+          totalDuration
+        );
+      } else if (detectionMode === 'manual') {
         try {
           const parsed = JSON.parse(manualTimestamps);
           if (Array.isArray(parsed) && parsed.length > 0) {
@@ -184,7 +195,7 @@ router.post(
           console.warn('[Manual Chapters Warning] Could not parse manual timestamps:', e);
         }
       } else {
-        // Groq AI Chapter Detection
+        // AI Chapter Detection via Groq Whisper Transcription
         if (process.env.GROQ_API_KEY && !process.env.GROQ_API_KEY.includes('your_groq_api_key')) {
           try {
             console.log('[Groq AI] Transcribing audio with Groq Whisper model...');
@@ -243,6 +254,7 @@ router.post(
         r2AudioKey,
         r2CoverKey,
         localFileName: uniqueAudioName,
+        localCoverName,
         audioFileName: audioFile.originalname,
         fileSize: audioFile.size,
         totalDuration,
@@ -338,6 +350,7 @@ function streamLocalFileRange(filePath: string, rangeHeader: string | undefined,
   res.setHeader('Content-Range', `bytes ${start}-${end}/${fileSize}`);
   res.setHeader('Accept-Ranges', 'bytes');
   res.setHeader('Content-Length', chunkSize);
+  res.setHeader('Content-[#Content-Type]', mimeType);
   res.setHeader('Content-Type', mimeType);
 
   fs.createReadStream(filePath, { start, end }).pipe(res);
@@ -352,7 +365,7 @@ router.get('/books/:id/cover', async (req: Request, res: Response) => {
       return res.redirect('https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&w=600&q=80');
     }
 
-    // Attempt streaming cover from Cloudflare R2
+    // 1. Attempt streaming cover from Cloudflare R2
     if (book.r2CoverKey && isR2Configured()) {
       try {
         const s3 = getR2Client();
@@ -371,7 +384,14 @@ router.get('/books/:id/cover', async (req: Request, res: Response) => {
       } catch (r2Err) {}
     }
 
-    // Check local cover fallback
+    // 2. Local cover file fallback
+    if (book.localCoverName) {
+      const p = path.join(uploadsDir, book.localCoverName);
+      if (fs.existsSync(p)) {
+        return res.sendFile(p);
+      }
+    }
+
     const possibleCovers = fs.readdirSync(uploadsDir).filter((f) => f.startsWith(`${id}-cover-`));
     if (possibleCovers.length > 0) {
       return res.sendFile(path.join(uploadsDir, possibleCovers[0]));
@@ -419,6 +439,13 @@ router.delete('/books/:id', async (req: Request, res: Response) => {
         const localPath = path.join(uploadsDir, book.localFileName);
         if (fs.existsSync(localPath)) {
           try { fs.unlinkSync(localPath); } catch {}
+        }
+      }
+
+      if (book.localCoverName) {
+        const localCoverPath = path.join(uploadsDir, book.localCoverName);
+        if (fs.existsSync(localCoverPath)) {
+          try { fs.unlinkSync(localCoverPath); } catch {}
         }
       }
 

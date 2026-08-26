@@ -5,7 +5,7 @@ import { parseTimestampToSeconds } from '../lib/utils';
 import { ManualTimestampInput, ProcessingStep } from '../types/audiobook';
 import { ManualTimestampForm } from '../components/Upload/ManualTimestampForm';
 import { ProcessingStatusUI } from '../components/Upload/ProcessingStatusUI';
-import { Upload, Sparkles, Clock, FileAudio, ArrowLeft, AlertCircle } from 'lucide-react';
+import { Upload, Sparkles, Clock, FileAudio, ArrowLeft, AlertCircle, FileText } from 'lucide-react';
 import { API_BASE } from '../lib/api';
 
 export const UploadPage: React.FC = () => {
@@ -19,7 +19,14 @@ export const UploadPage: React.FC = () => {
   const [author, setAuthor] = useState('');
   const [genre, setGenre] = useState('Self-Improvement');
   const [description, setDescription] = useState('');
-  const [detectionMode, setDetectionMode] = useState<'ai' | 'manual'>('ai');
+  const [detectionMode, setDetectionMode] = useState<'ai' | 'description' | 'manual'>('description');
+  const [timestampDescription, setTimestampDescription] = useState(
+`00:00 - Introduction & Preface
+03:15 - Chapter 1: The Core Concept
+14:20 - Chapter 2: Building Strong Habits
+28:45 - Chapter 3: Mastering Your Routine
+42:10 - Conclusion & Final Thoughts`
+  );
   const [manualTimestamps, setManualTimestamps] = useState<ManualTimestampInput[]>([
     { id: '1', chapterNumber: 1, title: 'Chapter 1: Introduction', startTime: '00:00:00' },
     { id: '2', chapterNumber: 2, title: 'Chapter 2: The Core Concept', startTime: '00:15:30' },
@@ -33,10 +40,10 @@ export const UploadPage: React.FC = () => {
 
   const processingSteps: ProcessingStep[] = [
     { id: '1', label: `Uploading MP3 to Cloudflare R2 Storage (${uploadPercent}%)`, status: uploadPercent === 100 ? 'completed' : 'active' },
-    { id: '2', label: 'Reading audio metadata with FFmpeg', status: 'pending' },
-    { id: '3', label: 'Transcribing audio with Groq Whisper API', status: 'pending' },
-    { id: '4', label: 'Detecting chapter timestamps with Groq Llama 3.3', status: 'pending' },
-    { id: '5', label: 'Saving metadata to SQLite database', status: 'pending' },
+    { id: '2', label: 'Reading audio duration with FFmpeg', status: 'pending' },
+    { id: '3', label: detectionMode === 'description' ? 'Parsing timestamp description with Groq AI LLM' : 'Transcribing audio with Groq Whisper API', status: 'pending' },
+    { id: '4', label: 'Structuring chapters & timestamps', status: 'pending' },
+    { id: '5', label: 'Saving audiobook metadata to SQLite database', status: 'pending' },
     { id: '6', label: 'Finalizing audiobook library record', status: 'pending' },
   ];
 
@@ -79,6 +86,7 @@ export const UploadPage: React.FC = () => {
       formData.append('genre', genre);
       formData.append('description', description);
       formData.append('detectionMode', detectionMode);
+      formData.append('timestampDescription', timestampDescription);
 
       if (detectionMode === 'manual') {
         const parsed = manualTimestamps.map((t) => ({
@@ -166,7 +174,7 @@ export const UploadPage: React.FC = () => {
             Upload <span className="text-[#FFD600]">Audiobook</span>
           </h1>
           <p className="text-xs text-gray-400 mt-0.5">
-            Store MP3 audiobooks in Cloudflare R2 Object Storage and extract chapter timestamps.
+            Store MP3 audiobooks in Cloudflare R2 Object Storage and extract chapter timestamps via Groq AI.
           </p>
         </div>
       </div>
@@ -306,52 +314,94 @@ export const UploadPage: React.FC = () => {
 
         {/* Chapter Detection Mode Selector */}
         <div className="bg-[#0D0D0D] border border-[#1F1F1F] rounded-2xl p-5 md:p-6 space-y-4">
-          <h3 className="font-bold text-white text-base">Chapter Detection</h3>
+          <h3 className="font-bold text-white text-base">Chapter Separation Mode</h3>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {/* Mode 1: AI Timestamp Description */}
+            <label
+              onClick={() => setDetectionMode('description')}
+              className={`flex flex-col p-4 rounded-xl border cursor-pointer transition-all ${
+                detectionMode === 'description'
+                  ? 'bg-[#FFD600]/10 border-[#FFD600] text-white shadow-yellow-sm'
+                  : 'bg-[#121212] border-[#222222] text-gray-400 hover:text-white'
+              }`}
+            >
+              <div className="flex items-center gap-2 mb-1.5">
+                <FileText className={`w-5 h-5 ${detectionMode === 'description' ? 'text-[#FFD600]' : 'text-gray-500'}`} />
+                <p className="font-bold text-sm text-white">Timestamp Description</p>
+              </div>
+              <p className="text-xs text-gray-400">
+                Paste a single text description with timestamps & titles. Groq AI parses all chapters automatically!
+              </p>
+            </label>
+
+            {/* Mode 2: AI Auto Transcription */}
             <label
               onClick={() => setDetectionMode('ai')}
-              className={`flex items-start gap-3 p-4 rounded-xl border cursor-pointer transition-all ${
+              className={`flex flex-col p-4 rounded-xl border cursor-pointer transition-all ${
                 detectionMode === 'ai'
                   ? 'bg-[#FFD600]/10 border-[#FFD600] text-white shadow-yellow-sm'
                   : 'bg-[#121212] border-[#222222] text-gray-400 hover:text-white'
               }`}
             >
-              <Sparkles className={`w-5 h-5 mt-0.5 ${detectionMode === 'ai' ? 'text-[#FFD600]' : 'text-gray-500'}`} />
-              <div>
-                <p className="font-bold text-sm text-white">AI Chapter Detection</p>
-                <p className="text-xs text-gray-400 mt-0.5">
-                  Transcribes audio with Groq & automatically detects chapter timestamps and titles.
-                </p>
+              <div className="flex items-center gap-2 mb-1.5">
+                <Sparkles className={`w-5 h-5 ${detectionMode === 'ai' ? 'text-[#FFD600]' : 'text-gray-500'}`} />
+                <p className="font-bold text-sm text-white">Groq AI Audio Analysis</p>
               </div>
+              <p className="text-xs text-gray-400">
+                Groq Whisper transcribes the audio and detects chapter boundaries from transcript.
+              </p>
             </label>
 
+            {/* Mode 3: Manual Entry */}
             <label
               onClick={() => setDetectionMode('manual')}
-              className={`flex items-start gap-3 p-4 rounded-xl border cursor-pointer transition-all ${
+              className={`flex flex-col p-4 rounded-xl border cursor-pointer transition-all ${
                 detectionMode === 'manual'
                   ? 'bg-[#FFD600]/10 border-[#FFD600] text-white shadow-yellow-sm'
                   : 'bg-[#121212] border-[#222222] text-gray-400 hover:text-white'
               }`}
             >
-              <Clock className={`w-5 h-5 mt-0.5 ${detectionMode === 'manual' ? 'text-[#FFD600]' : 'text-gray-500'}`} />
-              <div>
-                <p className="font-bold text-sm text-white">Manual Timestamps</p>
-                <p className="text-xs text-gray-400 mt-0.5">
-                  Manually enter custom chapter start times and titles.
-                </p>
+              <div className="flex items-center gap-2 mb-1.5">
+                <Clock className={`w-5 h-5 ${detectionMode === 'manual' ? 'text-[#FFD600]' : 'text-gray-500'}`} />
+                <p className="font-bold text-sm text-white">Manual List</p>
               </div>
+              <p className="text-xs text-gray-400">
+                Manually fill individual chapter fields one by one.
+              </p>
             </label>
           </div>
-        </div>
 
-        {/* Manual Timestamp Entry Form */}
-        {detectionMode === 'manual' && (
-          <ManualTimestampForm
-            timestamps={manualTimestamps}
-            onChange={setManualTimestamps}
-          />
-        )}
+          {/* Mode 1 UI: Single Textarea for Timestamp Description */}
+          {detectionMode === 'description' && (
+            <div className="pt-2 space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-semibold text-gray-300">
+                  Paste Single Timestamp Description Text
+                </label>
+                <span className="text-[11px] text-[#FFD600] font-medium">Groq AI Automated Parsing</span>
+              </div>
+              <textarea
+                rows={6}
+                value={timestampDescription}
+                onChange={(e) => setTimestampDescription(e.target.value)}
+                placeholder={`00:00 - Introduction\n03:15 - Chapter 1: The Beginning\n15:40 - Chapter 2: Deep Dive\n30:00 - Conclusion`}
+                className="w-full bg-[#141414] border border-[#2B2B2B] focus:border-[#FFD600] rounded-xl p-3.5 text-xs font-mono text-white focus:outline-none leading-relaxed"
+              />
+              <p className="text-[11px] text-gray-400">
+                💡 Paste any YouTube description, tracklist, or text containing timestamps (e.g. <code className="text-[#FFD600]">00:00 Intro</code>, <code className="text-[#FFD600]">05:30 Chapter 1</code>). Groq AI will convert it into chapter segments.
+              </p>
+            </div>
+          )}
+
+          {/* Mode 3 UI: Manual List */}
+          {detectionMode === 'manual' && (
+            <ManualTimestampForm
+              timestamps={manualTimestamps}
+              onChange={setManualTimestamps}
+            />
+          )}
+        </div>
 
         {/* Submit Button */}
         <button

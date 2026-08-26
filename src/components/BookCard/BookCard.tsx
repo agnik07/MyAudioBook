@@ -4,6 +4,7 @@ import { Book } from '../../types/audiobook';
 import { formatDuration } from '../../lib/utils';
 import { useAudioPlayer } from '../../context/AudioPlayerContext';
 import { Play, Pause, Heart, Clock, Trash2 } from 'lucide-react';
+import { API_BASE, getCoverUrl } from '../../lib/api';
 
 interface BookCardProps {
   book: Book;
@@ -47,7 +48,7 @@ export const BookCard: React.FC<BookCardProps> = ({ book, onToggleFavorite, onDe
       {/* Cover Image & Hover Play Button Container */}
       <div className="relative aspect-square w-full rounded-xl overflow-hidden mb-3 bg-[#171717] border border-[#222222]">
         <img
-          src={book.coverUrl}
+          src={book.coverUrl?.startsWith('/api') && API_BASE ? `${API_BASE}${book.coverUrl}` : (book.coverUrl || getCoverUrl(book.id))}
           alt={book.title}
           className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
         />

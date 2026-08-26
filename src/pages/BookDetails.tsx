@@ -5,7 +5,7 @@ import { formatDuration } from '../lib/utils';
 import { useAudioPlayer } from '../context/AudioPlayerContext';
 import { useBooks } from '../hooks/useBooks';
 import { ChapterList } from '../components/ChapterList/ChapterList';
-import { fetchBookDetails } from '../lib/api';
+import { fetchBookDetails, API_BASE, getCoverUrl } from '../lib/api';
 import { Play, Pause, Heart, ArrowLeft, Clock, Trash2, Globe } from 'lucide-react';
 
 export const BookDetails: React.FC = () => {
@@ -109,7 +109,7 @@ export const BookDetails: React.FC = () => {
         {/* Cover Art */}
         <div className="relative w-52 h-52 sm:w-64 sm:h-64 rounded-2xl overflow-hidden shadow-2xl border border-[#262626] flex-shrink-0">
           <img
-            src={book.coverUrl}
+            src={book.coverUrl?.startsWith('/api') && API_BASE ? `${API_BASE}${book.coverUrl}` : (book.coverUrl || getCoverUrl(book.id))}
             alt={book.title}
             className="w-full h-full object-cover"
           />

@@ -45,6 +45,7 @@ function initDatabase(database: Database) {
       r2_audio_key TEXT,
       r2_cover_key TEXT,
       local_file_name TEXT,
+      local_cover_name TEXT,
       cover_drive_file_id TEXT,
       audio_drive_file_id TEXT,
       drive_folder_id TEXT,
@@ -90,6 +91,7 @@ function initDatabase(database: Database) {
   try { database.exec(`ALTER TABLE books ADD COLUMN r2_audio_key TEXT;`); } catch {}
   try { database.exec(`ALTER TABLE books ADD COLUMN r2_cover_key TEXT;`); } catch {}
   try { database.exec(`ALTER TABLE books ADD COLUMN local_file_name TEXT;`); } catch {}
+  try { database.exec(`ALTER TABLE books ADD COLUMN local_cover_name TEXT;`); } catch {}
 
   saveDb();
 }
@@ -155,6 +157,9 @@ export async function getAllBooks(query?: string, genre?: string, filterBy?: str
 
     const r2CoverKey = row.r2_cover_key ? String(row.r2_cover_key) : null;
     const driveCoverId = row.cover_drive_file_id ? String(row.cover_drive_file_id) : null;
+    const localCoverName = row.local_cover_name ? String(row.local_cover_name) : null;
+
+    const hasCover = Boolean(r2CoverKey || driveCoverId || localCoverName);
 
     results.push({
       id: String(row.id),
@@ -164,8 +169,9 @@ export async function getAllBooks(query?: string, genre?: string, filterBy?: str
       genre: String(row.genre || 'Audiobook'),
       language: String(row.language || 'English'),
       r2AudioKey: row.r2_audio_key ? String(row.r2_audio_key) : null,
-      r2CoverKey: r2CoverKey,
+      r2CoverKey,
       localFileName: row.local_file_name ? String(row.local_file_name) : (row.audio_file_name ? String(row.audio_file_name) : null),
+      localCoverName,
       coverDriveFileId: driveCoverId,
       audioDriveFileId: row.audio_drive_file_id ? String(row.audio_drive_file_id) : null,
       driveFolderId: row.drive_folder_id ? String(row.drive_folder_id) : null,
@@ -181,7 +187,7 @@ export async function getAllBooks(query?: string, genre?: string, filterBy?: str
       currentChapterId: row.currentChapterId ? String(row.currentChapterId) : undefined,
       lastPositionSeconds: pos,
       completed: Boolean(row.completed),
-      coverUrl: (r2CoverKey || driveCoverId)
+      coverUrl: hasCover
         ? `/api/books/${row.id}/cover`
         : 'https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&w=600&q=80',
     });
@@ -223,6 +229,9 @@ export async function getBookById(id: string) {
 
   const r2CoverKey = row.r2_cover_key ? String(row.r2_cover_key) : null;
   const driveCoverId = row.cover_drive_file_id ? String(row.cover_drive_file_id) : null;
+  const localCoverName = row.local_cover_name ? String(row.local_cover_name) : null;
+
+  const hasCover = Boolean(r2CoverKey || driveCoverId || localCoverName);
 
   return {
     id: String(row.id),
@@ -232,8 +241,9 @@ export async function getBookById(id: string) {
     genre: String(row.genre || 'Audiobook'),
     language: String(row.language || 'English'),
     r2AudioKey: row.r2_audio_key ? String(row.r2_audio_key) : null,
-    r2CoverKey: r2CoverKey,
+    r2CoverKey,
     localFileName: row.local_file_name ? String(row.local_file_name) : (row.audio_file_name ? String(row.audio_file_name) : null),
+    localCoverName,
     coverDriveFileId: driveCoverId,
     audioDriveFileId: row.audio_drive_file_id ? String(row.audio_drive_file_id) : null,
     driveFolderId: row.drive_folder_id ? String(row.drive_folder_id) : null,
@@ -248,7 +258,7 @@ export async function getBookById(id: string) {
     currentChapterId: row.currentChapterId ? String(row.currentChapterId) : undefined,
     lastPositionSeconds: pos,
     completed: Boolean(row.completed),
-    coverUrl: (r2CoverKey || driveCoverId)
+    coverUrl: hasCover
       ? `/api/books/${row.id}/cover`
       : 'https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&w=600&q=80',
   };
@@ -259,11 +269,11 @@ export async function insertBook(book: any) {
   const stmt = database.prepare(`
     INSERT INTO books (
       id, title, author, description, genre, language,
-      r2_audio_key, r2_cover_key, local_file_name,
+      r2_audio_key, r2_cover_key, local_file_name, local_cover_name,
       cover_drive_file_id, audio_drive_file_id, drive_folder_id,
       audio_file_name, file_size, duration_seconds, processing_status,
       created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   stmt.run([
@@ -276,6 +286,7 @@ export async function insertBook(book: any) {
     book.r2AudioKey || null,
     book.r2CoverKey || null,
     book.localFileName || null,
+    book.localCoverName || null,
     book.coverDriveFileId || null,
     book.audioDriveFileId || null,
     book.driveFolderId || null,
