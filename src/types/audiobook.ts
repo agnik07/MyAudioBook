@@ -19,6 +19,7 @@ export interface Book {
   progressPercentage?: number;
   currentChapterId?: string;
   lastPositionSeconds?: number;
+  lastPlayedAt?: string;
   completed?: boolean;
   chaptersCount?: number;
 }

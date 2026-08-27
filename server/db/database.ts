@@ -104,7 +104,8 @@ export async function getAllBooks(query?: string, genre?: string, filterBy?: str
            (SELECT COUNT(*) FROM favorites f WHERE f.book_id = b.id) > 0 as isFavorite,
            lp.chapter_id as currentChapterId,
            lp.position_seconds as lastPositionSeconds,
-           lp.completed as completed
+           lp.completed as completed,
+           lp.updated_at as lastPlayedAt
     FROM books b
     LEFT JOIN listening_progress lp ON b.id = lp.book_id
     WHERE 1=1

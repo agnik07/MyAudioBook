@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useBooks } from '../hooks/useBooks';
 import { useAudioPlayer } from '../context/AudioPlayerContext';
@@ -20,12 +20,39 @@ export const Home: React.FC = () => {
   const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
   const firstName = profile?.displayName?.split(' ')[0] || 'Agnik';
 
-  // Continue listening algorithm (Requirement #32):
-  // 1. Currently playing book, 2. Partial progress, 3. Recently played
-  const continueListeningBook =
-    currentBook ||
-    allBooks.find((b) => (b.progressPercentage || 0) > 0 && !b.completed) ||
-    allBooks[0];
+  // Continue listening algorithm:
+  // 1. Currently playing active book in local player
+  // 2. The book with the MOST RECENT lastPlayedAt timestamp across all devices (phone/laptop)
+  // 3. Fallback to first book in library
+  const continueListeningBook = useMemo(() => {
+    if (currentBook) return currentBook;
+
+    const progressMap = (() => {
+      try {
+        const stored = localStorage.getItem('audiobook_progress');
+        return stored ? JSON.parse(stored) : {};
+      } catch (e) {
+        return {};
+      }
+    })();
+
+    const booksWithLastPlayed = allBooks.map((b) => {
+      const serverTime = b.lastPlayedAt ? new Date(b.lastPlayedAt).getTime() : 0;
+      const localTime = progressMap[b.id]?.updatedAt ? new Date(progressMap[b.id].updatedAt).getTime() : 0;
+      const maxTime = Math.max(serverTime, localTime);
+      return { book: b, lastPlayedTime: maxTime };
+    });
+
+    const playedBooks = booksWithLastPlayed
+      .filter((item) => item.lastPlayedTime > 0 || (item.book.lastPositionSeconds || 0) > 0)
+      .sort((a, b) => b.lastPlayedTime - a.lastPlayedTime);
+
+    if (playedBooks.length > 0) {
+      return playedBooks[0].book;
+    }
+
+    return allBooks[0] || null;
+  }, [currentBook, allBooks]);
 
   const recentlyAdded = [...allBooks]
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())

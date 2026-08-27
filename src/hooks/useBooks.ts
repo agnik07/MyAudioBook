@@ -38,13 +38,48 @@ export function useBooks() {
         sortBy: filters.sortBy,
       });
 
+      // Read local progress cache
+      let localProgressMap: Record<string, any> = {};
+      try {
+        const stored = localStorage.getItem('audiobook_progress');
+        if (stored) localProgressMap = JSON.parse(stored);
+      } catch (e) {}
+
       // Merge with custom locally stored books if offline
       const savedUserBooksRaw = localStorage.getItem('audiobook_custom_books');
       const customBooks: Book[] = savedUserBooksRaw ? JSON.parse(savedUserBooksRaw) : [];
       const validCustomBooks = customBooks.filter((b) => !b.id.startsWith('demo-book-'));
 
       const combinedMap = new Map<string, Book>();
-      serverBooks.forEach((b) => combinedMap.set(b.id, b));
+      serverBooks.forEach((b) => {
+        const lp = localProgressMap[b.id];
+        let pos = b.lastPositionSeconds || 0;
+        let chapterId = b.currentChapterId;
+        let lastPlayed = b.lastPlayedAt;
+
+        if (lp) {
+          const localPos = typeof lp.positionSeconds === 'number' ? lp.positionSeconds : 0;
+          const localTime = lp.updatedAt ? new Date(lp.updatedAt).getTime() : 0;
+          const serverTime = lastPlayed ? new Date(lastPlayed).getTime() : 0;
+
+          if (localPos > 0 && (localTime > serverTime || pos === 0)) {
+            pos = localPos;
+            if (lp.chapterId) chapterId = lp.chapterId;
+            if (lp.updatedAt) lastPlayed = lp.updatedAt;
+          }
+        }
+
+        const pct = b.totalDuration > 0 ? Math.min(100, Math.round((pos / b.totalDuration) * 100)) : 0;
+
+        combinedMap.set(b.id, {
+          ...b,
+          lastPositionSeconds: pos,
+          currentChapterId: chapterId,
+          lastPlayedAt: lastPlayed,
+          progressPercentage: pct,
+        });
+      });
+
       validCustomBooks.forEach((b) => {
         if (!combinedMap.has(b.id)) combinedMap.set(b.id, b);
       });
