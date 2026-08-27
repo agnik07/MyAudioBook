@@ -279,9 +279,11 @@ export const AudioPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const audioStreamUrl = getAudioStreamUrl(book.id);
 
     if (audioRef.current) {
+      audioRef.current.preload = 'auto';
       if (!audioRef.current.src.includes(audioStreamUrl)) {
         pendingSeekTimeRef.current = targetPos;
         audioRef.current.src = audioStreamUrl;
+        audioRef.current.load();
       } else {
         audioRef.current.currentTime = targetPos;
         setCurrentTime(targetPos);

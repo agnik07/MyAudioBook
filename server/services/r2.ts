@@ -1,4 +1,5 @@
 import { S3Client, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand, ListObjectsV2Command, PutObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Upload } from '@aws-sdk/lib-storage';
 import { Response } from 'express';
 import fs from 'fs';
@@ -71,6 +72,24 @@ export async function uploadToR2(
 
   await upload.done();
   return key;
+}
+
+/**
+ * Generate high-performance direct streaming pre-signed URL from Cloudflare R2 edge servers
+ */
+export async function getR2AudioPresignedUrl(key: string): Promise<string | null> {
+  if (!isR2Configured() || !key) return null;
+  try {
+    const s3 = getR2Client();
+    const bucket = getR2BucketName();
+    const command = new GetObjectCommand({ Bucket: bucket, Key: key });
+    // Generate signed URL valid for 24 hours (86400 seconds)
+    const signedUrl = await getSignedUrl(s3, command, { expiresIn: 86400 });
+    return signedUrl;
+  } catch (err: any) {
+    console.warn(`[R2 Presigned URL Warning] Could not generate signed URL for ${key}:`, err.message || err);
+    return null;
+  }
 }
 
 /**
@@ -159,6 +178,7 @@ export async function streamR2FileRange(
     res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Length', contentLength);
     res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
 
     if (response.Body instanceof Readable) {
       response.Body.pipe(res);

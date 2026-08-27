@@ -24,6 +24,7 @@ import {
   getR2BucketName,
   syncBooksFromR2,
   saveChaptersToR2,
+  getR2AudioPresignedUrl,
 } from '../services/r2';
 import { GetObjectCommand } from '@aws-sdk/client-s3';
 import { getAudioMetadata } from '../services/ffmpeg';
@@ -375,16 +376,22 @@ router.put('/books/:id/chapters', async (req: Request, res: Response) => {
   }
 });
 
-// 5. GET /api/books/:id/audio (HTTP Range Audio Streaming Proxy)
+// 5. GET /api/books/:id/audio (High-Speed Cloudflare R2 Edge Stream / Local Fallback)
 router.get('/books/:id/audio', async (req: Request, res: Response) => {
   try {
     const id = req.params.id as string;
     const book = await getBookById(id);
     if (!book) return res.status(404).json({ error: 'Audiobook not found' });
 
-    // 1. Attempt streaming directly from Cloudflare R2 object storage
+    // 1. High-speed direct edge streaming via Cloudflare R2 Presigned URL
     if (book.r2AudioKey && isR2Configured()) {
       try {
+        const presignedUrl = await getR2AudioPresignedUrl(book.r2AudioKey);
+        if (presignedUrl) {
+          // Direct 302 redirect to Cloudflare R2 edge CDN for 0-latency playback & seeking across devices!
+          res.setHeader('Cache-Control', 'public, max-age=86400');
+          return res.redirect(302, presignedUrl);
+        }
         await streamR2FileRange(book.r2AudioKey, req.headers.range as string | undefined, res);
         return;
       } catch (r2Err) {
