@@ -86,6 +86,21 @@ export function useBooks() {
 
       const finalBooks = Array.from(combinedMap.values());
 
+      // Update local storage progress map with fresh server values
+      const progressToCache: Record<string, any> = {};
+      finalBooks.forEach((b) => {
+        if ((b.lastPositionSeconds || 0) > 0) {
+          progressToCache[b.id] = {
+            bookId: b.id,
+            chapterId: b.currentChapterId,
+            positionSeconds: b.lastPositionSeconds,
+            completed: b.completed,
+            updatedAt: b.lastPlayedAt || new Date().toISOString(),
+          };
+        }
+      });
+      localStorage.setItem('audiobook_progress', JSON.stringify(progressToCache));
+
       setBooks(finalBooks);
       // Cache fresh books list for instant next load
       localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(finalBooks));
@@ -102,7 +117,13 @@ export function useBooks() {
   useEffect(() => {
     loadBooks();
 
-    // Auto-sync progress & library across devices whenever window gains focus or visibility
+    // Auto-sync progress & library across devices periodically and whenever window gains focus
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        loadBooks();
+      }
+    }, 5000);
+
     const handleFocusOrVisible = () => {
       if (document.visibilityState === 'visible') {
         loadBooks();
@@ -113,6 +134,7 @@ export function useBooks() {
     document.addEventListener('visibilitychange', handleFocusOrVisible);
 
     return () => {
+      clearInterval(interval);
       window.removeEventListener('focus', handleFocusOrVisible);
       document.removeEventListener('visibilitychange', handleFocusOrVisible);
     };

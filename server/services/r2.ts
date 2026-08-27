@@ -5,7 +5,7 @@ import { Response } from 'express';
 import fs from 'fs';
 import { Readable } from 'stream';
 import dotenv from 'dotenv';
-import { getBookById, insertBook, insertChapters } from '../db/database';
+import { getBookById, insertBook, insertChapters, upsertListeningProgress } from '../db/database';
 
 dotenv.config();
 
@@ -118,6 +118,58 @@ export async function saveChaptersToR2(bookId: string, metadataPayload: any): Pr
 }
 
 /**
+ * Save master listening progress map to Cloudflare R2 bucket for permanent cross-device sync
+ */
+export async function saveUserProgressToR2(progressMap: Record<string, any>): Promise<void> {
+  if (!isR2Configured()) return;
+  try {
+    const s3 = getR2Client();
+    const bucket = getR2BucketName();
+    const key = `audiobooks/user_progress.json`;
+    const jsonStr = JSON.stringify(progressMap, null, 2);
+
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: bucket,
+        Key: key,
+        Body: jsonStr,
+        ContentType: 'application/json',
+      })
+    );
+  } catch (err: any) {
+    console.warn(`[R2 Progress Warning] Could not save user_progress.json to R2:`, err.message || err);
+  }
+}
+
+/**
+ * Fetch master listening progress map from Cloudflare R2 bucket
+ */
+export async function fetchUserProgressFromR2(): Promise<Record<string, any> | null> {
+  if (!isR2Configured()) return null;
+  try {
+    const s3 = getR2Client();
+    const bucket = getR2BucketName();
+    const key = `audiobooks/user_progress.json`;
+
+    const cmd = new GetObjectCommand({ Bucket: bucket, Key: key });
+    const response = await s3.send(cmd);
+
+    let stream = response.Body as any;
+    if (stream) {
+      const chunks: Buffer[] = [];
+      for await (const chunk of stream) {
+        chunks.push(Buffer.from(chunk));
+      }
+      const jsonText = Buffer.concat(chunks).toString('utf-8');
+      return JSON.parse(jsonText);
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Fetch chapters JSON metadata file from Cloudflare R2
  */
 export async function fetchChaptersFromR2(bookId: string): Promise<any | null> {
@@ -207,7 +259,7 @@ export async function deleteR2Item(key: string): Promise<void> {
 }
 
 /**
- * Automatically sync/recover books from Cloudflare R2 Object Storage into SQLite
+ * Automatically sync/recover books and user listening progress from Cloudflare R2 Object Storage into SQLite
  */
 export async function syncBooksFromR2(): Promise<number> {
   if (!isR2Configured()) return 0;
@@ -324,6 +376,21 @@ export async function syncBooksFromR2(): Promise<number> {
         await insertChapters(chaptersToUse);
         syncedCount++;
         console.log(`[R2 Auto-Sync] Automatically recovered book "${titleClean}" (${bookId}) with ${chaptersToUse.length} chapters from Cloudflare R2!`);
+      }
+    }
+
+    // Recover master listening progress map from Cloudflare R2 into SQLite
+    const r2ProgressMap = await fetchUserProgressFromR2();
+    if (r2ProgressMap && typeof r2ProgressMap === 'object') {
+      for (const [bookId, prog] of Object.entries(r2ProgressMap)) {
+        if (prog && typeof prog.positionSeconds === 'number') {
+          await upsertListeningProgress(
+            bookId,
+            prog.chapterId || `ch-${bookId}-1`,
+            prog.positionSeconds,
+            Boolean(prog.completed)
+          );
+        }
       }
     }
 

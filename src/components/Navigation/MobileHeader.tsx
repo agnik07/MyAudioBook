@@ -18,14 +18,6 @@ export const MobileHeader: React.FC = () => {
       </div>
 
       <div className="flex items-center gap-3">
-        <NavLink
-          to="/upload"
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#FFD600] text-black text-xs font-semibold shadow-yellow-sm"
-        >
-          <Upload className="w-3.5 h-3.5" />
-          <span>Upload</span>
-        </NavLink>
-
         <NavLink to="/settings">
           <img
             src={profile?.avatarUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80'}

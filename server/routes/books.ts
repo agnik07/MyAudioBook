@@ -25,6 +25,7 @@ import {
   syncBooksFromR2,
   saveChaptersToR2,
   getR2AudioPresignedUrl,
+  saveUserProgressToR2,
 } from '../services/r2';
 import { GetObjectCommand } from '@aws-sdk/client-s3';
 import { getAudioMetadata } from '../services/ffmpeg';
@@ -497,16 +498,56 @@ router.get('/books/:id/cover', async (req: Request, res: Response) => {
 });
 
 // 7. PUT /api/books/:id/progress
+router.get('/books/:id/progress', async (req: Request, res: Response) => {
+  try {
+    const id = req.params.id as string;
+    const book = await getBookById(id);
+    if (!book) return res.status(404).json({ error: 'Book not found' });
+    res.json({
+      bookId: book.id,
+      chapterId: book.currentChapterId,
+      positionSeconds: book.lastPositionSeconds || 0,
+      completed: book.completed || false,
+      updatedAt: book.lastPlayedAt || new Date().toISOString(),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to fetch progress' });
+  }
+});
+
 router.put('/books/:id/progress', async (req: Request, res: Response) => {
   try {
     const id = req.params.id as string;
     const { chapterId, positionSeconds, completed } = req.body;
     await upsertListeningProgress(id, chapterId, positionSeconds, completed);
+
+    // Save updated user progress map to Cloudflare R2 user_progress.json
+    saveUserProgressToR2Map();
+
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ error: 'Failed to save progress' });
   }
 });
+
+async function saveUserProgressToR2Map() {
+  try {
+    const all = await getAllBooks();
+    const map: Record<string, any> = {};
+    for (const b of all) {
+      if ((b.lastPositionSeconds || 0) > 0) {
+        map[b.id] = {
+          bookId: b.id,
+          chapterId: b.currentChapterId,
+          positionSeconds: b.lastPositionSeconds,
+          completed: b.completed,
+          updatedAt: (b as any).lastPlayedAt || new Date().toISOString(),
+        };
+      }
+    }
+    await saveUserProgressToR2(map);
+  } catch (e) {}
+}
 
 // 8. POST /api/books/:id/favorite
 router.post('/books/:id/favorite', async (req: Request, res: Response) => {

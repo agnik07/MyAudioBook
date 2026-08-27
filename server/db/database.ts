@@ -204,7 +204,8 @@ export async function getBookById(id: string) {
            (SELECT COUNT(*) FROM favorites f WHERE f.book_id = b.id) > 0 as isFavorite,
            lp.chapter_id as currentChapterId,
            lp.position_seconds as lastPositionSeconds,
-           lp.completed as completed
+           lp.completed as completed,
+           lp.updated_at as lastPlayedAt
     FROM books b
     LEFT JOIN listening_progress lp ON b.id = lp.book_id
     WHERE b.id = ?
@@ -258,6 +259,7 @@ export async function getBookById(id: string) {
     progressPercentage,
     currentChapterId: row.currentChapterId ? String(row.currentChapterId) : undefined,
     lastPositionSeconds: pos,
+    lastPlayedAt: row.lastPlayedAt ? String(row.lastPlayedAt) : undefined,
     completed: Boolean(row.completed),
     coverUrl: hasCover
       ? `/api/books/${row.id}/cover`
