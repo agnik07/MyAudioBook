@@ -38,22 +38,13 @@ export const Home: React.FC = () => {
       <SetupBanner />
 
       {/* Greeting Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight">
-            {greeting}, <span className="text-[#FFD600]">{firstName}</span> 👋
-          </h1>
-          <p className="text-sm text-gray-400 mt-1">
-            Welcome back to your private audiobook sanctuary.
-          </p>
-        </div>
-
-        <button
-          onClick={() => navigate('/upload')}
-          className="self-start md:self-auto flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#FFD600] text-black font-bold text-sm shadow-yellow-glow hover:bg-[#FFE033] hover:scale-105 transition-all"
-        >
-          <Sparkles className="w-4 h-4" /> Add Audiobook
-        </button>
+      <div>
+        <h1 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight">
+          {greeting}, <span className="text-[#FFD600]">{firstName}</span> 👋
+        </h1>
+        <p className="text-sm text-gray-400 mt-1">
+          Welcome back to your private audiobook sanctuary.
+        </p>
       </div>
 
       {/* Continue Listening Hero Banner */}

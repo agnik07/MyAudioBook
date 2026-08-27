@@ -229,30 +229,37 @@ export const AudioPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
     setChapters(bookChapters);
 
     // Determine exact saved playback position & chapter for target book
-    let savedPos: number | undefined = startPosition;
-    let savedChapterId = chapterId || book.currentChapterId;
+    let serverPos = typeof book.lastPositionSeconds === 'number' ? book.lastPositionSeconds : 0;
+    let localPos = 0;
+    let localChapterId = '';
 
-    if (savedPos === undefined) {
-      try {
-        const stored = localStorage.getItem('audiobook_progress');
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          const prog = parsed[book.id];
-          if (prog) {
-            if (typeof prog.positionSeconds === 'number' && prog.positionSeconds > 0) {
-              savedPos = prog.positionSeconds;
-            }
-            if (prog.chapterId && !savedChapterId) {
-              savedChapterId = prog.chapterId;
-            }
+    try {
+      const stored = localStorage.getItem('audiobook_progress');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        const prog = parsed[book.id];
+        if (prog) {
+          if (typeof prog.positionSeconds === 'number' && prog.positionSeconds > 0) {
+            localPos = prog.positionSeconds;
+          }
+          if (prog.chapterId) {
+            localChapterId = prog.chapterId;
           }
         }
-      } catch (e) {}
+      }
+    } catch (e) {}
+
+    let savedPos = startPosition;
+    if (savedPos === undefined) {
+      // Pick the max non-zero position between server (e.g. phone) and local storage for seamless cross-device sync
+      if (serverPos > 0 && (serverPos >= localPos || localPos === 0)) {
+        savedPos = serverPos;
+      } else if (localPos > 0) {
+        savedPos = localPos;
+      }
     }
 
-    if (savedPos === undefined && typeof book.lastPositionSeconds === 'number' && book.lastPositionSeconds > 0) {
-      savedPos = book.lastPositionSeconds;
-    }
+    let savedChapterId = chapterId || book.currentChapterId || localChapterId;
 
     const targetPos = savedPos ?? 0;
 

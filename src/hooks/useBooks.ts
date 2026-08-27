@@ -66,6 +66,21 @@ export function useBooks() {
 
   useEffect(() => {
     loadBooks();
+
+    // Auto-sync progress & library across devices whenever window gains focus or visibility
+    const handleFocusOrVisible = () => {
+      if (document.visibilityState === 'visible') {
+        loadBooks();
+      }
+    };
+
+    window.addEventListener('focus', handleFocusOrVisible);
+    document.addEventListener('visibilitychange', handleFocusOrVisible);
+
+    return () => {
+      window.removeEventListener('focus', handleFocusOrVisible);
+      document.removeEventListener('visibilitychange', handleFocusOrVisible);
+    };
   }, [loadBooks]);
 
   const toggleFavorite = async (bookId: string) => {
