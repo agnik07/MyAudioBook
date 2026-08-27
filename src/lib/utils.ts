@@ -9,7 +9,7 @@ export function cn(...inputs: ClassValue[]) {
  * Format seconds into HH:MM:SS or MM:SS for player timer
  */
 export function formatTime(seconds: number): string {
-  if (isNaN(seconds) || seconds < 0) return '00:00';
+  if (isNaN(seconds) || !isFinite(seconds) || seconds < 0) return '00:00';
   
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);

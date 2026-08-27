@@ -48,13 +48,19 @@ export const PersistentPlayer: React.FC = () => {
   }
 
   const chStart = currentChapter.startTime || 0;
-  const chEnd = currentChapter.endTime > 0 ? currentChapter.endTime : (duration || chStart + 1);
-  const chDuration = Math.max(1, currentChapter.duration || (chEnd - chStart));
-  const chCurrentTime = Math.max(0, Math.min(chDuration, currentTime - chStart));
+  const chEnd = currentChapter.endTime > currentChapter.startTime ? currentChapter.endTime : (duration > chStart ? duration : chStart + 1);
+  const chDuration = Math.max(1, currentChapter.duration || Math.max(1, chEnd - chStart));
+  
+  let chCurrentTime = 0;
+  if (currentTime >= chStart) {
+    chCurrentTime = Math.min(chDuration, currentTime - chStart);
+  } else {
+    chCurrentTime = Math.min(chDuration, Math.max(0, currentTime));
+  }
 
   const isChapterMode = timeMode === 'chapter';
   const activeCurrentTime = isChapterMode ? chCurrentTime : currentTime;
-  const activeDuration = isChapterMode ? chDuration : (duration || 100);
+  const activeDuration = isChapterMode ? chDuration : (duration > 0 ? duration : chEnd);
   const progressPercentage = activeDuration > 0 ? (activeCurrentTime / activeDuration) * 100 : 0;
 
   return (

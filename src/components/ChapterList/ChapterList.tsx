@@ -83,12 +83,12 @@ export const ChapterList: React.FC<ChapterListProps> = ({ chapters, bookId, book
               </div>
 
               {/* Start Timestamp & Duration */}
-              <div className="flex flex-col items-end flex-shrink-0 ml-4">
+              <div className="flex flex-col items-end flex-shrink-0 ml-3">
                 <span className="text-xs font-mono font-bold text-white group-hover:text-[#FFD600]">
                   {formatTime(chapter.startTime)}
                 </span>
-                <span className="text-[10px] font-mono text-gray-500">
-                  Duration {formatTime(chapter.duration)}
+                <span className="text-[10px] font-mono text-gray-400">
+                  {formatTime(chapter.duration)}
                 </span>
               </div>
             </div>
