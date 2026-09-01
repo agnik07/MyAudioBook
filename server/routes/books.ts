@@ -16,7 +16,6 @@ import {
 } from '../db/database';
 import {
   uploadToR2,
-  streamR2FileRange,
   deleteR2Item,
   getR2StorageInfo,
   isR2Configured,
@@ -25,6 +24,7 @@ import {
   syncBooksFromR2,
   saveChaptersToR2,
   getR2AudioPresignedUrl,
+  getR2CoverPresignedUrl,
   saveUserProgressToR2,
 } from '../services/r2';
 import { GetObjectCommand } from '@aws-sdk/client-s3';
@@ -377,30 +377,86 @@ router.put('/books/:id/chapters', async (req: Request, res: Response) => {
   }
 });
 
-// 5. GET /api/books/:id/audio (High-Speed Cloudflare R2 Edge Stream / Local Fallback)
+// 5. GET /api/books/:id/audio-url (Control Plane: Generate Direct Cloudflare R2 Audio Presigned URL)
+router.get('/books/:id/audio-url', async (req: Request, res: Response) => {
+  try {
+    const id = req.params.id as string;
+    const book = await getBookById(id);
+    if (!book) return res.status(404).json({ error: 'Audiobook not found' });
+
+    if (book.r2AudioKey && isR2Configured()) {
+      const presigned = await getR2AudioPresignedUrl(book.r2AudioKey, 3600);
+      if (presigned) {
+        console.log(`[Control Plane] Generated Cloudflare R2 signed audio URL for book: ${id}`);
+        return res.json({
+          bookId: id,
+          url: presigned.url,
+          expiresAt: presigned.expiresAt,
+          expiresInSeconds: presigned.expiresInSeconds,
+          isLocalFallback: false,
+        });
+      }
+    }
+
+    // Local file fallback URL for offline local development without R2 credentials
+    res.json({
+      bookId: id,
+      url: `/api/books/${id}/audio-fallback`,
+      expiresAt: new Date(Date.now() + 3600 * 1000).toISOString(),
+      expiresInSeconds: 3600,
+      isLocalFallback: true,
+    });
+  } catch (err: any) {
+    console.error('Error generating audio presigned URL:', err);
+    res.status(500).json({ error: 'Failed to generate audio playback URL' });
+  }
+});
+
+// 6. GET /api/books/:id/cover-url (Control Plane: Generate Direct Cloudflare R2 Cover Presigned URL)
+router.get('/books/:id/cover-url', async (req: Request, res: Response) => {
+  try {
+    const id = req.params.id as string;
+    const book = await getBookById(id);
+    if (!book) {
+      return res.json({
+        bookId: id,
+        url: 'https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&w=600&q=80',
+      });
+    }
+
+    if (book.r2CoverKey && isR2Configured()) {
+      const presignedUrl = await getR2CoverPresignedUrl(book.r2CoverKey, 86400);
+      if (presignedUrl) {
+        return res.json({ bookId: id, url: presignedUrl });
+      }
+    }
+
+    res.json({
+      bookId: id,
+      url: book.coverUrl || 'https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&w=600&q=80',
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to generate cover URL' });
+  }
+});
+
+// 7. GET /api/books/:id/audio (Backwards compatibility redirect to R2 presigned URL / local fallback)
 router.get('/books/:id/audio', async (req: Request, res: Response) => {
   try {
     const id = req.params.id as string;
     const book = await getBookById(id);
     if (!book) return res.status(404).json({ error: 'Audiobook not found' });
 
-    // 1. High-speed direct edge streaming via Cloudflare R2 Presigned URL
     if (book.r2AudioKey && isR2Configured()) {
-      try {
-        const presignedUrl = await getR2AudioPresignedUrl(book.r2AudioKey);
-        if (presignedUrl) {
-          // Direct 302 redirect to Cloudflare R2 edge CDN for 0-latency playback & seeking across devices!
-          res.setHeader('Cache-Control', 'public, max-age=86400');
-          return res.redirect(302, presignedUrl);
-        }
-        await streamR2FileRange(book.r2AudioKey, req.headers.range as string | undefined, res);
-        return;
-      } catch (r2Err) {
-        console.warn('[Audio Stream Warning] Cloudflare R2 range stream failed, attempting local fallback:', r2Err);
+      const presigned = await getR2AudioPresignedUrl(book.r2AudioKey, 3600);
+      if (presigned?.url) {
+        // Direct 302 Redirect so Render never proxies MP3 bytes
+        res.setHeader('Cache-Control', 'public, max-age=3600');
+        return res.redirect(302, presigned.url);
       }
     }
 
-    // 2. Local file storage fallback
+    // Local fallback streaming for local dev
     const possiblePaths = [
       book.localFileName ? path.join(uploadsDir, book.localFileName) : null,
       book.audioFileName ? path.join(uploadsDir, book.audioFileName) : null,
@@ -413,13 +469,37 @@ router.get('/books/:id/audio', async (req: Request, res: Response) => {
       }
     }
 
-    // Secondary fallback sample audio
     res.redirect('https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3?filename=lofi-study-112191.mp3');
   } catch (err: any) {
-    console.error('Audio Streaming Error:', err);
+    console.error('Audio Stream Redirect Error:', err);
     if (!res.headersSent) {
-      res.status(500).json({ error: 'Failed to stream audio file' });
+      res.status(500).json({ error: 'Failed to obtain audio stream' });
     }
+  }
+});
+
+// GET /api/books/:id/audio-fallback (Local development byte-range streaming fallback)
+router.get('/books/:id/audio-fallback', async (req: Request, res: Response) => {
+  try {
+    const id = req.params.id as string;
+    const book = await getBookById(id);
+    if (!book) return res.status(404).json({ error: 'Audiobook not found' });
+
+    const possiblePaths = [
+      book.localFileName ? path.join(uploadsDir, book.localFileName) : null,
+      book.audioFileName ? path.join(uploadsDir, book.audioFileName) : null,
+      book.audioFileName ? path.join(tempDir, book.audioFileName) : null,
+    ].filter(Boolean) as string[];
+
+    for (const p of possiblePaths) {
+      if (fs.existsSync(p)) {
+        return streamLocalFileRange(p, req.headers.range as string | undefined, res);
+      }
+    }
+
+    res.redirect('https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3?filename=lofi-study-112191.mp3');
+  } catch (err: any) {
+    res.status(500).json({ error: 'Local audio fallback failed' });
   }
 });
 
@@ -450,7 +530,7 @@ function streamLocalFileRange(filePath: string, rangeHeader: string | undefined,
   fs.createReadStream(filePath, { start, end }).pipe(res);
 }
 
-// 6. GET /api/books/:id/cover (Cover Image Stream Proxy)
+// 8. GET /api/books/:id/cover (Cover image 302 redirect to Cloudflare R2 / local fallback)
 router.get('/books/:id/cover', async (req: Request, res: Response) => {
   try {
     const id = req.params.id as string;
@@ -459,26 +539,14 @@ router.get('/books/:id/cover', async (req: Request, res: Response) => {
       return res.redirect('https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&w=600&q=80');
     }
 
-    // 1. Attempt streaming cover from Cloudflare R2
     if (book.r2CoverKey && isR2Configured()) {
-      try {
-        const s3 = getR2Client();
-        const bucket = getR2BucketName();
-        const command = new GetObjectCommand({ Bucket: bucket, Key: book.r2CoverKey });
-        const response = await s3.send(command);
-
-        res.setHeader('Content-Type', response.ContentType || 'image/jpeg');
-        if (response.Body instanceof Readable) {
-          response.Body.pipe(res);
-        } else {
-          // @ts-ignore
-          Readable.from(response.Body as any).pipe(res);
-        }
-        return;
-      } catch (r2Err) {}
+      const presignedUrl = await getR2CoverPresignedUrl(book.r2CoverKey, 86400);
+      if (presignedUrl) {
+        res.setHeader('Cache-Control', 'public, max-age=86400');
+        return res.redirect(302, presignedUrl);
+      }
     }
 
-    // 2. Local cover file fallback
     if (book.localCoverName) {
       const p = path.join(uploadsDir, book.localCoverName);
       if (fs.existsSync(p)) {

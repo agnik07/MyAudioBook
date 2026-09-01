@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
 import { Book, Chapter, PlaybackSpeed } from '../types/audiobook';
-import { saveProgressApi, fetchBookDetails, getAudioStreamUrl } from '../lib/api';
+import { saveProgressApi, fetchBookDetails, getAudioStreamUrl, fetchAudioPresignedUrl } from '../lib/api';
 
 interface AudioPlayerContextType {
   currentBook: Book | null;
@@ -36,6 +36,7 @@ export const AudioPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const pendingSeekTimeRef = useRef<number | null>(null);
   const lastValidTimeRef = useRef<number>(0);
+  const activePresignedUrlRef = useRef<{ bookId: string; url: string; expiresAt: number } | null>(null);
 
   const [currentBook, setCurrentBook] = useState<Book | null>(null);
   const [currentChapter, setCurrentChapter] = useState<Chapter | null>(null);
@@ -48,6 +49,31 @@ export const AudioPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [isExpanded, setIsExpanded] = useState<boolean>(false);
   const [timeMode, setTimeMode] = useState<'chapter' | 'book'>('chapter');
+
+  const getOrFetchAudioUrl = useCallback(async (bookId: string): Promise<string> => {
+    const now = Date.now();
+    if (
+      activePresignedUrlRef.current &&
+      activePresignedUrlRef.current.bookId === bookId &&
+      activePresignedUrlRef.current.expiresAt > now + 5 * 60 * 1000 // 5 minute buffer
+    ) {
+      return activePresignedUrlRef.current.url;
+    }
+
+    try {
+      const res = await fetchAudioPresignedUrl(bookId);
+      const expiresAt = new Date(res.expiresAt).getTime();
+      activePresignedUrlRef.current = {
+        bookId,
+        url: res.url,
+        expiresAt,
+      };
+      return res.url;
+    } catch (err) {
+      console.warn(`[Audio Engine] Could not fetch presigned URL for book ${bookId}, falling back to legacy endpoint:`, err);
+      return getAudioStreamUrl(bookId);
+    }
+  }, []);
 
   const toggleTimeMode = () => {
     setTimeMode((prev) => (prev === 'chapter' ? 'book' : 'chapter'));
@@ -160,11 +186,37 @@ export const AudioPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
       saveCurrentProgress();
     };
 
+    const handleError = async (e: Event) => {
+      console.warn('[Audio Player Engine Error Event]:', e);
+      if (currentBook) {
+        try {
+          console.log('[Audio Player] URL expired or network error encountered. Refreshing Cloudflare R2 presigned URL...');
+          activePresignedUrlRef.current = null; // force clear cached URL
+          const freshUrl = await getOrFetchAudioUrl(currentBook.id);
+          const targetPos = Math.max(Math.floor(currentTime), lastValidTimeRef.current);
+
+          if (audioRef.current) {
+            pendingSeekTimeRef.current = targetPos;
+            audioRef.current.src = freshUrl;
+            audioRef.current.load();
+            if (isPlaying) {
+              audioRef.current.play().catch((err) => {
+                if (err.name !== 'AbortError') console.warn('Resume playback failed:', err);
+              });
+            }
+          }
+        } catch (err) {
+          console.error('[Audio Engine Error Recovery Failed]:', err);
+        }
+      }
+    };
+
     audio.addEventListener('timeupdate', handleTimeUpdate);
     audio.addEventListener('loadedmetadata', handleLoadedMetadata);
     audio.addEventListener('ended', handleEnded);
     audio.addEventListener('play', handlePlay);
     audio.addEventListener('pause', handlePause);
+    audio.addEventListener('error', handleError);
 
     return () => {
       audio.removeEventListener('timeupdate', handleTimeUpdate);
@@ -172,8 +224,9 @@ export const AudioPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
       audio.removeEventListener('ended', handleEnded);
       audio.removeEventListener('play', handlePlay);
       audio.removeEventListener('pause', handlePause);
+      audio.removeEventListener('error', handleError);
     };
-  }, [currentChapter, chapters, saveCurrentProgress]);
+  }, [currentBook, currentChapter, chapters, currentTime, isPlaying, saveCurrentProgress, getOrFetchAudioUrl]);
 
   // Save progress on page unload
   useEffect(() => {
@@ -276,11 +329,11 @@ export const AudioPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
       targetChapter = bookChapters[0];
     }
 
-    const audioStreamUrl = getAudioStreamUrl(book.id);
+    const audioStreamUrl = await getOrFetchAudioUrl(book.id);
 
     if (audioRef.current) {
       audioRef.current.preload = 'auto';
-      if (!audioRef.current.src.includes(audioStreamUrl)) {
+      if (audioRef.current.src !== audioStreamUrl && !audioRef.current.src.includes(audioStreamUrl)) {
         pendingSeekTimeRef.current = targetPos;
         audioRef.current.src = audioStreamUrl;
         audioRef.current.load();
@@ -303,7 +356,7 @@ export const AudioPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
     }
   };
 
-  const playChapter = (chapter: Chapter, targetBook?: Book) => {
+  const playChapter = async (chapter: Chapter, targetBook?: Book) => {
     const activeBook = targetBook || currentBook;
     if (!activeBook) return;
 
@@ -320,12 +373,13 @@ export const AudioPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
     setCurrentChapter(chapter);
 
     if (audioRef.current) {
-      const audioStreamUrl = getAudioStreamUrl(activeBook.id);
+      const audioStreamUrl = await getOrFetchAudioUrl(activeBook.id);
       const startTime = chapter.startTime || 0;
 
-      if (!audioRef.current.src.includes(audioStreamUrl)) {
+      if (audioRef.current.src !== audioStreamUrl && !audioRef.current.src.includes(audioStreamUrl)) {
         pendingSeekTimeRef.current = startTime;
         audioRef.current.src = audioStreamUrl;
+        audioRef.current.load();
       } else {
         audioRef.current.currentTime = startTime;
         setCurrentTime(startTime);

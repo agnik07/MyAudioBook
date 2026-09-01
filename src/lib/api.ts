@@ -16,6 +16,33 @@ export function getCoverUrl(bookId: string): string {
   return `/api/books/${bookId}/cover`;
 }
 
+export async function fetchAudioPresignedUrl(bookId: string): Promise<{
+  bookId: string;
+  url: string;
+  expiresAt: string;
+  expiresInSeconds: number;
+  isLocalFallback?: boolean;
+}> {
+  const endpoint = API_BASE ? `${API_BASE}/api/books/${bookId}/audio-url` : `/api/books/${bookId}/audio-url`;
+  const res = await fetch(endpoint);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch audio presigned URL for book ${bookId}`);
+  }
+  return await res.json();
+}
+
+export async function fetchCoverPresignedUrl(bookId: string): Promise<{
+  bookId: string;
+  url: string;
+}> {
+  const endpoint = API_BASE ? `${API_BASE}/api/books/${bookId}/cover-url` : `/api/books/${bookId}/cover-url`;
+  const res = await fetch(endpoint);
+  if (!res.ok) {
+    return { bookId, url: getCoverUrl(bookId) };
+  }
+  return await res.json();
+}
+
 export async function fetchBooks(params?: {
   search?: string;
   genre?: string;

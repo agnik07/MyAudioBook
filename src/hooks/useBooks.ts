@@ -101,9 +101,16 @@ export function useBooks() {
       });
       localStorage.setItem('audiobook_progress', JSON.stringify(progressToCache));
 
-      setBooks(finalBooks);
-      // Cache fresh books list for instant next load
-      localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(finalBooks));
+      // Prevent triggering React state re-renders if book list & progress data haven't changed
+      setBooks((prev) => {
+        const getSig = (arr: Book[]) =>
+          JSON.stringify(arr.map((b) => `${b.id}-${b.isFavorite}-${b.progressPercentage}-${b.lastPositionSeconds}-${b.title}`));
+        if (getSig(prev) === getSig(finalBooks)) {
+          return prev;
+        }
+        localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(finalBooks));
+        return finalBooks;
+      });
     } catch (err) {
       console.warn('Backend API connection warning, reading local cache:', err);
       const savedUserBooksRaw = localStorage.getItem('audiobook_custom_books') || '[]';
@@ -117,12 +124,12 @@ export function useBooks() {
   useEffect(() => {
     loadBooks();
 
-    // Auto-sync progress & library across devices periodically and whenever window gains focus
+    // Auto-sync progress & library across devices periodically (30s) and whenever window gains focus
     const interval = setInterval(() => {
       if (document.visibilityState === 'visible') {
         loadBooks();
       }
-    }, 5000);
+    }, 30000);
 
     const handleFocusOrVisible = () => {
       if (document.visibilityState === 'visible') {

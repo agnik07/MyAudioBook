@@ -25,41 +25,52 @@ export const BookDetails: React.FC = () => {
   const [updateSuccess, setUpdateSuccess] = useState<boolean>(false);
   const [updateError, setUpdateError] = useState<string | null>(null);
 
+  // Initial load when book ID changes
   useEffect(() => {
     if (!id) return;
+    let isMounted = true;
+
+    const loadInitialData = async () => {
+      setLoading(true);
+      try {
+        const details = await fetchBookDetails(id);
+        if (isMounted) {
+          setBook(details.book);
+          setChapters(details.chapters || []);
+        }
+      } catch (err) {
+        console.error('Error loading book details:', err);
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    };
+
+    loadInitialData();
+    return () => {
+      isMounted = false;
+    };
+  }, [id]);
+
+  // Keep `book` in sync with `allBooks` (favorite toggles, progress) without resetting loading or re-fetching chapters
+  useEffect(() => {
+    if (!id || allBooks.length === 0) return;
     const target = allBooks.find((b) => b.id === id);
     if (target) {
-      setBook(target);
-      loadChapters(target.id);
-    } else {
-      loadBookAndChapters(id);
+      setBook((prev) => {
+        if (!prev) return target;
+        if (
+          prev.isFavorite !== target.isFavorite ||
+          prev.progressPercentage !== target.progressPercentage ||
+          prev.lastPositionSeconds !== target.lastPositionSeconds ||
+          prev.title !== target.title ||
+          prev.coverUrl !== target.coverUrl
+        ) {
+          return { ...prev, ...target };
+        }
+        return prev;
+      });
     }
   }, [id, allBooks]);
-
-  const loadChapters = async (bookId: string) => {
-    setLoading(true);
-    try {
-      const details = await fetchBookDetails(bookId);
-      setChapters(details.chapters || []);
-    } catch (err) {
-      console.warn('Could not fetch book chapters:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const loadBookAndChapters = async (bookId: string) => {
-    setLoading(true);
-    try {
-      const details = await fetchBookDetails(bookId);
-      setBook(details.book);
-      setChapters(details.chapters || []);
-    } catch (err) {
-      console.error('Error loading book details:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleUpdateChaptersSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

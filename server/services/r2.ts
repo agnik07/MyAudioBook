@@ -75,22 +75,54 @@ export async function uploadToR2(
 }
 
 /**
- * Generate high-performance direct streaming pre-signed URL from Cloudflare R2 edge servers
+ * Generate high-performance direct streaming pre-signed GET URL from Cloudflare R2 edge servers
+ * Render server handles control plane only; large audio bytes stream R2 -> Browser directly.
  */
-export async function getR2AudioPresignedUrl(key: string): Promise<string | null> {
+export async function getR2AudioPresignedUrl(
+  key: string,
+  expiresInSeconds: number = 3600
+): Promise<{ url: string; expiresAt: string; expiresInSeconds: number } | null> {
   if (!isR2Configured() || !key) return null;
   try {
     const s3 = getR2Client();
     const bucket = getR2BucketName();
     const command = new GetObjectCommand({ Bucket: bucket, Key: key });
-    // Generate signed URL valid for 24 hours (86400 seconds)
-    const signedUrl = await getSignedUrl(s3, command, { expiresIn: 86400 });
-    return signedUrl;
+    
+    // Generate signed URL with configurable expiration (default 1 hour = 3600 seconds)
+    const url = await getSignedUrl(s3, command, { expiresIn: expiresInSeconds });
+    const expiresAt = new Date(Date.now() + expiresInSeconds * 1000).toISOString();
+
+    return {
+      url,
+      expiresAt,
+      expiresInSeconds,
+    };
   } catch (err: any) {
     console.warn(`[R2 Presigned URL Warning] Could not generate signed URL for ${key}:`, err.message || err);
     return null;
   }
 }
+
+/**
+ * Generate direct pre-signed URL for cover images from Cloudflare R2
+ */
+export async function getR2CoverPresignedUrl(
+  key: string,
+  expiresInSeconds: number = 86400
+): Promise<string | null> {
+  if (!isR2Configured() || !key) return null;
+  try {
+    const s3 = getR2Client();
+    const bucket = getR2BucketName();
+    const command = new GetObjectCommand({ Bucket: bucket, Key: key });
+    const url = await getSignedUrl(s3, command, { expiresIn: expiresInSeconds });
+    return url;
+  } catch (err: any) {
+    console.warn(`[R2 Cover Presigned URL Warning] Could not generate signed URL for ${key}:`, err.message || err);
+    return null;
+  }
+}
+
 
 /**
  * Save chapters JSON metadata file directly to Cloudflare R2
