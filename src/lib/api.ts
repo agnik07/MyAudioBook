@@ -16,6 +16,25 @@ export function getCoverUrl(bookId: string): string {
   return `/api/books/${bookId}/cover`;
 }
 
+export function getFullCoverUrl(book: Book): string {
+  if (!book) return '';
+  let cover = book.coverUrl;
+  if (!cover) {
+    cover = getCoverUrl(book.id);
+  }
+  if (cover.startsWith('/api') && API_BASE) {
+    cover = `${API_BASE}${cover}`;
+  }
+  if (cover.startsWith('/')) {
+    try {
+      return new URL(cover, window.location.origin).href;
+    } catch (e) {
+      return cover;
+    }
+  }
+  return cover;
+}
+
 export async function fetchAudioPresignedUrl(bookId: string): Promise<{
   bookId: string;
   url: string;

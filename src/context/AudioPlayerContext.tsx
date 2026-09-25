@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
 import { Book, Chapter, PlaybackSpeed } from '../types/audiobook';
-import { saveProgressApi, fetchBookDetails, getAudioStreamUrl, fetchAudioPresignedUrl } from '../lib/api';
+import { saveProgressApi, fetchBookDetails, getAudioStreamUrl, fetchAudioPresignedUrl, getFullCoverUrl } from '../lib/api';
 
 interface AudioPlayerContextType {
   currentBook: Book | null;
@@ -79,6 +79,69 @@ export const AudioPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
     setTimeMode((prev) => (prev === 'chapter' ? 'book' : 'chapter'));
   };
 
+  // Update MediaSession Metadata (Lock screen title, artist, album, and full cover artwork)
+  const updateMediaSessionMetadata = useCallback((book: Book | null, chapter: Chapter | null) => {
+    if (!('mediaSession' in navigator) || !book) return;
+
+    const fullCoverUrl = getFullCoverUrl(book);
+    const chapterTitle = chapter?.title || '';
+    const displayTitle = chapterTitle ? `${chapterTitle} — ${book.title}` : book.title;
+
+    try {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: displayTitle,
+        artist: book.author || 'Audiobook',
+        album: book.title,
+        artwork: [
+          { src: fullCoverUrl, sizes: '96x96', type: 'image/jpeg' },
+          { src: fullCoverUrl, sizes: '128x128', type: 'image/jpeg' },
+          { src: fullCoverUrl, sizes: '192x192', type: 'image/png' },
+          { src: fullCoverUrl, sizes: '256x256', type: 'image/png' },
+          { src: fullCoverUrl, sizes: '384x384', type: 'image/png' },
+          { src: fullCoverUrl, sizes: '512x512', type: 'image/png' },
+        ],
+      });
+    } catch (e) {
+      console.warn('[MediaSession] Metadata update error:', e);
+    }
+  }, []);
+
+  // Sync MediaSession position state for OS lock screen seek bar
+  const syncPositionState = useCallback(() => {
+    if (
+      'mediaSession' in navigator &&
+      'setPositionState' in navigator.mediaSession &&
+      audioRef.current &&
+      audioRef.current.duration &&
+      !isNaN(audioRef.current.duration) &&
+      audioRef.current.duration > 0
+    ) {
+      try {
+        navigator.mediaSession.setPositionState({
+          duration: audioRef.current.duration,
+          playbackRate: audioRef.current.playbackRate || 1,
+          position: Math.min(Math.max(0, audioRef.current.currentTime || 0), audioRef.current.duration),
+        });
+      } catch (e) {
+        /* ignore position sync error */
+      }
+    }
+  }, []);
+
+  // Trigger metadata update when currentBook or currentChapter changes
+  useEffect(() => {
+    if (currentBook) {
+      updateMediaSessionMetadata(currentBook, currentChapter);
+    }
+  }, [currentBook, currentChapter, updateMediaSessionMetadata]);
+
+  // Keep navigator.mediaSession.playbackState synchronized with isPlaying
+  useEffect(() => {
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
+    }
+  }, [isPlaying]);
+
   // Helper to save current progress for any book and chapter
   const saveProgressForBook = useCallback(async (
     targetBook: Book | null,
@@ -148,6 +211,8 @@ export const AudioPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
         lastValidTimeRef.current = Math.floor(time);
       }
 
+      syncPositionState();
+
       // Auto-sync currentChapter if audio currentTime enters a different chapter range
       if (chapters.length > 0) {
         const matchingCh = chapters.find(
@@ -166,6 +231,7 @@ export const AudioPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
     const handleLoadedMetadata = () => {
       setDuration(audio.duration || 0);
+      syncPositionState();
       if (pendingSeekTimeRef.current !== null) {
         const seekTarget = pendingSeekTimeRef.current;
         audio.currentTime = seekTarget;
@@ -177,12 +243,18 @@ export const AudioPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
     const handleEnded = () => {
       setIsPlaying(false);
+      if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
       handleAutoAdvance();
     };
 
-    const handlePlay = () => setIsPlaying(true);
+    const handlePlay = () => {
+      setIsPlaying(true);
+      if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+    };
+
     const handlePause = () => {
       setIsPlaying(false);
+      if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
       saveCurrentProgress();
     };
 
@@ -226,7 +298,7 @@ export const AudioPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
       audio.removeEventListener('pause', handlePause);
       audio.removeEventListener('error', handleError);
     };
-  }, [currentBook, currentChapter, chapters, currentTime, isPlaying, saveCurrentProgress, getOrFetchAudioUrl]);
+  }, [currentBook, currentChapter, chapters, currentTime, isPlaying, saveCurrentProgress, getOrFetchAudioUrl, syncPositionState]);
 
   // Save progress on page unload
   useEffect(() => {
@@ -499,6 +571,107 @@ export const AudioPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
     setIsExpanded((prev) => !prev);
   };
 
+  // Keep action handlers in sync with latest functions & state
+  const handlersRef = useRef({
+    skipBackward,
+    skipForward,
+    previousChapter,
+    nextChapter,
+    seekTo,
+    currentBook,
+    getOrFetchAudioUrl,
+  });
+
+  useEffect(() => {
+    handlersRef.current = {
+      skipBackward,
+      skipForward,
+      previousChapter,
+      nextChapter,
+      seekTo,
+      currentBook,
+      getOrFetchAudioUrl,
+    };
+  });
+
+  // Register MediaSession Action Handlers for OS Lock Screen / Bluetooth / Headphone controls
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return;
+
+    const setAction = (action: MediaSessionAction, handler: MediaSessionActionHandler | null) => {
+      try {
+        navigator.mediaSession.setActionHandler(action, handler);
+      } catch (e) {}
+    };
+
+    setAction('play', async () => {
+      const audio = audioRef.current;
+      if (!audio) return;
+      try {
+        await audio.play();
+        setIsPlaying(true);
+        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+      } catch (err) {
+        console.warn('[MediaSession] Background play failed, attempting refresh:', err);
+        const book = handlersRef.current.currentBook;
+        if (book) {
+          try {
+            const freshUrl = await handlersRef.current.getOrFetchAudioUrl(book.id);
+            const targetPos = Math.max(Math.floor(audio.currentTime || 0), lastValidTimeRef.current);
+            pendingSeekTimeRef.current = targetPos;
+            audio.src = freshUrl;
+            audio.load();
+            await audio.play();
+            setIsPlaying(true);
+            if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+          } catch (e2) {
+            console.error('[MediaSession] Retry play error:', e2);
+          }
+        }
+      }
+    });
+
+    setAction('pause', () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        setIsPlaying(false);
+        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
+      }
+    });
+
+    setAction('seekbackward', (details) => {
+      handlersRef.current.skipBackward(details.seekOffset || 15);
+    });
+
+    setAction('seekforward', (details) => {
+      handlersRef.current.skipForward(details.seekOffset || 30);
+    });
+
+    setAction('previoustrack', () => {
+      handlersRef.current.previousChapter();
+    });
+
+    setAction('nexttrack', () => {
+      handlersRef.current.nextChapter();
+    });
+
+    setAction('seekto', (details) => {
+      if (details.seekTime !== undefined && details.seekTime !== null) {
+        handlersRef.current.seekTo(details.seekTime);
+      }
+    });
+
+    return () => {
+      setAction('play', null);
+      setAction('pause', null);
+      setAction('seekbackward', null);
+      setAction('seekforward', null);
+      setAction('previoustrack', null);
+      setAction('nexttrack', null);
+      setAction('seekto', null);
+    };
+  }, []);
+
   return (
     <AudioPlayerContext.Provider
       value={{
@@ -529,7 +702,7 @@ export const AudioPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
         toggleExpand,
       }}
     >
-      <audio ref={audioRef} preload="metadata" className="hidden" />
+      <audio ref={audioRef} preload="auto" playsInline className="hidden" />
       {children}
     </AudioPlayerContext.Provider>
   );
