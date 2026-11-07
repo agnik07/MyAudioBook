@@ -6,7 +6,7 @@ import { useAudioPlayer } from '../context/AudioPlayerContext';
 import { useBooks } from '../hooks/useBooks';
 import { ChapterList } from '../components/ChapterList/ChapterList';
 import { fetchBookDetails, API_BASE, getCoverUrl } from '../lib/api';
-import { Play, Pause, Heart, ArrowLeft, Clock, Trash2, Globe, Sparkles, FileText, CheckCircle2 } from 'lucide-react';
+import { Play, Pause, Heart, ArrowLeft, Clock, Trash2, Globe, Sparkles, FileText, CheckCircle2, RotateCcw } from 'lucide-react';
 
 export const BookDetails: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -226,6 +226,22 @@ export const BookDetails: React.FC = () => {
                 </>
               )}
             </button>
+
+            {/* Scenario F: Intentional Restart from Beginning */}
+            {(book.progressPercentage || 0) > 0 && (
+              <button
+                onClick={() => {
+                  if (window.confirm(`Restart "${book.title}" from the beginning?`)) {
+                    playBook(book, undefined, 0, chapters);
+                  }
+                }}
+                className="flex items-center gap-2 px-4 py-3.5 rounded-xl bg-[#141414] hover:bg-[#1E1E1E] border border-[#2D2D2D] text-gray-300 hover:text-white font-semibold text-sm transition-colors"
+                title="Restart from Beginning (00:00)"
+              >
+                <RotateCcw className="w-4 h-4 text-gray-400" />
+                <span>Restart</span>
+              </button>
+            )}
 
             <button
               onClick={() => setShowChapterEdit((prev) => !prev)}

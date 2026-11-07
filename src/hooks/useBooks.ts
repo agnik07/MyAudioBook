@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Book, FilterState, Chapter } from '../types/audiobook';
-import { fetchBooks, toggleFavoriteApi, deleteBookApi } from '../lib/api';
+import { fetchBooks, toggleFavoriteApi, deleteBookApi, invalidateBooksCache } from '../lib/api';
 
 const LOCAL_CACHE_KEY = 'cached_audiobooks_list';
 
@@ -29,6 +29,15 @@ export function useBooks() {
     filterBy: 'all',
   });
 
+  const isMountedRef = useRef<boolean>(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
   const loadBooks = useCallback(async () => {
     try {
       const serverBooks = await fetchBooks({
@@ -37,6 +46,8 @@ export function useBooks() {
         filterBy: filters.filterBy,
         sortBy: filters.sortBy,
       });
+
+      if (!isMountedRef.current) return;
 
       // Read local progress cache
       let localProgressMap: Record<string, any> = {};
@@ -51,6 +62,7 @@ export function useBooks() {
       const validCustomBooks = customBooks.filter((b) => !b.id.startsWith('demo-book-'));
 
       const combinedMap = new Map<string, Book>();
+
       serverBooks.forEach((b) => {
         const lp = localProgressMap[b.id];
         let pos = b.lastPositionSeconds || 0;
@@ -62,7 +74,8 @@ export function useBooks() {
           const localTime = lp.updatedAt ? new Date(lp.updatedAt).getTime() : 0;
           const serverTime = lastPlayed ? new Date(lastPlayed).getTime() : 0;
 
-          if (localPos > 0 && (localTime > serverTime || pos === 0)) {
+          // Deterministic reconciliation: If local update is newer, use local position
+          if (localPos > 0 && (localTime >= serverTime || pos === 0)) {
             pos = localPos;
             if (lp.chapterId) chapterId = lp.chapterId;
             if (lp.updatedAt) lastPlayed = lp.updatedAt;
@@ -86,20 +99,30 @@ export function useBooks() {
 
       const finalBooks = Array.from(combinedMap.values());
 
-      // Update local storage progress map with fresh server values
-      const progressToCache: Record<string, any> = {};
-      finalBooks.forEach((b) => {
-        if ((b.lastPositionSeconds || 0) > 0) {
-          progressToCache[b.id] = {
-            bookId: b.id,
-            chapterId: b.currentChapterId,
-            positionSeconds: b.lastPositionSeconds,
-            completed: b.completed,
-            updatedAt: b.lastPlayedAt || new Date().toISOString(),
-          };
-        }
-      });
-      localStorage.setItem('audiobook_progress', JSON.stringify(progressToCache));
+      // SAFE MERGE: Update progress map WITHOUT purging other existing books!
+      try {
+        const existingProgressRaw = localStorage.getItem('audiobook_progress');
+        const mergedProgress: Record<string, any> = existingProgressRaw ? JSON.parse(existingProgressRaw) : {};
+
+        finalBooks.forEach((b) => {
+          if ((b.lastPositionSeconds || 0) > 0) {
+            const existing = mergedProgress[b.id];
+            const existingTime = existing?.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
+            const bTime = b.lastPlayedAt ? new Date(b.lastPlayedAt).getTime() : 0;
+
+            if (!existing || bTime >= existingTime) {
+              mergedProgress[b.id] = {
+                bookId: b.id,
+                chapterId: b.currentChapterId,
+                positionSeconds: b.lastPositionSeconds,
+                completed: b.completed,
+                updatedAt: b.lastPlayedAt || new Date().toISOString(),
+              };
+            }
+          }
+        });
+        localStorage.setItem('audiobook_progress', JSON.stringify(mergedProgress));
+      } catch (e) {}
 
       // Prevent triggering React state re-renders if book list & progress data haven't changed
       setBooks((prev) => {
@@ -108,16 +131,23 @@ export function useBooks() {
         if (getSig(prev) === getSig(finalBooks)) {
           return prev;
         }
-        localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(finalBooks));
+        // Only update local cache when not filtering/searching
+        if (!filters.search && !filters.genre && filters.filterBy === 'all') {
+          localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(finalBooks));
+        }
         return finalBooks;
       });
     } catch (err) {
       console.warn('Backend API connection warning, reading local cache:', err);
       const savedUserBooksRaw = localStorage.getItem('audiobook_custom_books') || '[]';
       const customBooks: Book[] = JSON.parse(savedUserBooksRaw);
-      setBooks(customBooks.filter((b) => !b.id.startsWith('demo-book-')));
+      if (isMountedRef.current) {
+        setBooks(customBooks.filter((b) => !b.id.startsWith('demo-book-')));
+      }
     } finally {
-      setLoading(false);
+      if (isMountedRef.current) {
+        setLoading(false);
+      }
     }
   }, [filters.search, filters.genre, filters.filterBy, filters.sortBy]);
 
@@ -189,6 +219,7 @@ export function useBooks() {
   };
 
   const addBook = (newBook: Book, _chapters?: Chapter[]) => {
+    invalidateBooksCache();
     setBooks((prev) => {
       const updated = [newBook, ...prev];
       localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(updated));

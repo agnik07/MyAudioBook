@@ -35,13 +35,107 @@ import {
   parseChaptersFromDescriptionWithGroq,
 } from '../services/groq';
 
-function parseTimestampToSeconds(timestamp: string): number {
+function parseTimestampToSeconds(timestamp: string | number): number {
+  if (typeof timestamp === 'number') {
+    return isNaN(timestamp) || !isFinite(timestamp) ? 0 : Math.max(0, timestamp);
+  }
   if (!timestamp) return 0;
-  const parts = String(timestamp).trim().split(':').map((p) => parseInt(p, 10) || 0);
-  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
-  if (parts.length === 2) return parts[0] * 60 + parts[1];
-  if (parts.length === 1) return parts[0];
+  const clean = String(timestamp).trim().replace(/^[^\d:]+/, '');
+  if (!clean) return 0;
+  const parts = clean.split(':').map((p) => parseFloat(p) || 0);
+  if (parts.length === 3) return Math.max(0, parts[0] * 3600 + parts[1] * 60 + parts[2]);
+  if (parts.length === 2) return Math.max(0, parts[0] * 60 + parts[1]);
+  if (parts.length === 1) return Math.max(0, parts[0]);
   return 0;
+}
+
+function validateAndSortChapters(
+  rawChapters: Array<{ chapter_number?: number; title?: string; start_time?: number | string; end_time?: number | string }>,
+  totalDuration: number
+) {
+  if (!rawChapters || rawChapters.length === 0) {
+    const dur = Math.max(1, Math.floor(totalDuration || 60));
+    return [{ chapter_number: 1, title: 'Chapter 1', start_time: 0, end_time: dur }];
+  }
+
+  const parsed = rawChapters
+    .map((c, idx) => ({
+      title: (c.title || `Chapter ${idx + 1}`).trim(),
+      start_time: Math.max(0, parseTimestampToSeconds(c.start_time ?? 0)),
+      raw_end: c.end_time !== undefined ? Math.max(0, parseTimestampToSeconds(c.end_time)) : 0,
+    }))
+    .sort((a, b) => a.start_time - b.start_time);
+
+  if (parsed.length > 0 && parsed[0].start_time <= 3) {
+    parsed[0].start_time = 0;
+  }
+
+  const validDuration = totalDuration > 0 ? totalDuration : (parsed[parsed.length - 1]?.raw_end || 3600);
+  const result: Array<{ chapter_number: number; title: string; start_time: number; end_time: number }> = [];
+
+  for (let i = 0; i < parsed.length; i++) {
+    const curr = parsed[i];
+    const next = parsed[i + 1];
+    const startTime = curr.start_time;
+    let endTime: number;
+
+    if (next) {
+      endTime = Math.max(startTime + 1, next.start_time);
+    } else {
+      endTime = Math.max(startTime + 1, Math.max(validDuration, curr.raw_end));
+    }
+
+    if (validDuration > startTime && endTime > validDuration) {
+      endTime = validDuration;
+    }
+
+    result.push({
+      chapter_number: i + 1,
+      title: curr.title || `Chapter ${i + 1}`,
+      start_time: Math.round(startTime * 100) / 100,
+      end_time: Math.round(endTime * 100) / 100,
+    });
+  }
+
+  return result;
+}
+
+let r2ProgressDebounceTimer: NodeJS.Timeout | null = null;
+
+function queueSaveUserProgressToR2Map(immediate: boolean = false) {
+  const doSave = async () => {
+    try {
+      const all = await getAllBooks();
+      const map: Record<string, any> = {};
+      for (const b of all) {
+        if ((b.lastPositionSeconds || 0) > 0) {
+          map[b.id] = {
+            bookId: b.id,
+            chapterId: b.currentChapterId,
+            positionSeconds: b.lastPositionSeconds,
+            completed: b.completed,
+            updatedAt: (b as any).lastPlayedAt || new Date().toISOString(),
+          };
+        }
+      }
+      await saveUserProgressToR2(map);
+    } catch (e) {}
+  };
+
+  if (immediate) {
+    if (r2ProgressDebounceTimer) {
+      clearTimeout(r2ProgressDebounceTimer);
+      r2ProgressDebounceTimer = null;
+    }
+    doSave();
+  } else {
+    if (!r2ProgressDebounceTimer) {
+      r2ProgressDebounceTimer = setTimeout(() => {
+        r2ProgressDebounceTimer = null;
+        doSave();
+      }, 30000);
+    }
+  }
 }
 
 const router = Router();
@@ -247,9 +341,12 @@ router.post(
         }
       }
 
+      // Validate and sequentially sort chapter timestamps
+      const validatedChapters = validateAndSortChapters(detectedChapters, totalDuration);
+
       // Format chapter objects for database insertion
-      const formattedChapters = detectedChapters.map((ch) => {
-        const duration = Math.max(1, ch.end_time - ch.start_time);
+      const formattedChapters = validatedChapters.map((ch) => {
+        const duration = Math.max(1, Math.round((ch.end_time - ch.start_time) * 100) / 100);
         return {
           id: `ch-${bookId}-${ch.chapter_number}`,
           bookId,
@@ -349,14 +446,16 @@ router.put('/books/:id/chapters', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'No valid chapter timestamps found in input.' });
     }
 
-    const formattedChapters = detectedChapters.map((ch) => ({
+    const validated = validateAndSortChapters(detectedChapters, book.totalDuration);
+
+    const formattedChapters = validated.map((ch) => ({
       id: `ch-${id}-${ch.chapter_number}`,
       bookId: id,
       chapterNumber: ch.chapter_number,
       title: ch.title,
       startTime: ch.start_time,
       endTime: ch.end_time,
-      duration: Math.max(1, ch.end_time - ch.start_time),
+      duration: Math.max(1, Math.round((ch.end_time - ch.start_time) * 100) / 100),
     }));
 
     // Delete old chapters & insert new chapters into SQLite
@@ -508,6 +607,9 @@ function streamLocalFileRange(filePath: string, rangeHeader: string | undefined,
   const fileSize = stat.size;
   const mimeType = 'audio/mpeg';
 
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Accept-Ranges, Content-Length');
+
   if (!rangeHeader) {
     res.setHeader('Content-Length', fileSize);
     res.setHeader('Content-Type', mimeType);
@@ -589,33 +691,14 @@ router.put('/books/:id/progress', async (req: Request, res: Response) => {
     const { chapterId, positionSeconds, completed } = req.body;
     await upsertListeningProgress(id, chapterId, positionSeconds, completed);
 
-    // Save updated user progress map to Cloudflare R2 user_progress.json
-    saveUserProgressToR2Map();
+    // Queue debounced background sync of master user progress map to Cloudflare R2
+    queueSaveUserProgressToR2Map(Boolean(completed));
 
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ error: 'Failed to save progress' });
   }
 });
-
-async function saveUserProgressToR2Map() {
-  try {
-    const all = await getAllBooks();
-    const map: Record<string, any> = {};
-    for (const b of all) {
-      if ((b.lastPositionSeconds || 0) > 0) {
-        map[b.id] = {
-          bookId: b.id,
-          chapterId: b.currentChapterId,
-          positionSeconds: b.lastPositionSeconds,
-          completed: b.completed,
-          updatedAt: (b as any).lastPlayedAt || new Date().toISOString(),
-        };
-      }
-    }
-    await saveUserProgressToR2(map);
-  } catch (e) {}
-}
 
 // 8. POST /api/books/:id/favorite
 router.post('/books/:id/favorite', async (req: Request, res: Response) => {

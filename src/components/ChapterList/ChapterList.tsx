@@ -36,10 +36,9 @@ export const ChapterList: React.FC<ChapterListProps> = ({ chapters, bookId, book
                 } else if (book) {
                   playChapter(chapter, book);
                 } else if (currentBook && currentBook.id === bookId) {
-                  playChapter(chapter);
+                  playChapter(chapter, currentBook);
                 } else {
-                  // Fallback load book
-                  playBook({ id: bookId, title: 'Audiobook', author: 'Author' } as Book, chapter.id, chapter.startTime, chapters);
+                  playChapter(chapter);
                 }
               }}
               className={`group flex items-center justify-between p-3 rounded-xl border transition-all duration-200 cursor-pointer ${

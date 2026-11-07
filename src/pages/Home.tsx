@@ -13,7 +13,7 @@ export const Home: React.FC = () => {
   const navigate = useNavigate();
   const { profile } = useAuth();
   const { allBooks, toggleFavorite, deleteBook } = useBooks();
-  const { currentBook, isPlaying, playBook, togglePlayPause } = useAudioPlayer();
+  const { currentBook, isPlaying, playBook, togglePlayPause, currentTime, duration } = useAudioPlayer();
 
   // Greeting based on hour
   const hour = new Date().getHours();
@@ -120,23 +120,31 @@ export const Home: React.FC = () => {
               <p className="text-sm text-gray-400 font-medium">By {continueListeningBook.author}</p>
 
               {/* Progress Bar */}
-              <div className="space-y-1.5 max-w-md mx-auto md:mx-0 pt-2">
-                <div className="flex justify-between text-xs font-medium text-gray-400">
-                  <span>
-                    {formatDuration(continueListeningBook.lastPositionSeconds || 0)} of{' '}
-                    {formatDuration(continueListeningBook.totalDuration)}
-                  </span>
-                  <span className="text-[#FFD600] font-bold">
-                    {continueListeningBook.progressPercentage || 0}% Complete
-                  </span>
-                </div>
-                <div className="w-full bg-[#262626] h-2 rounded-full overflow-hidden">
-                  <div
-                    className="bg-[#FFD600] h-full rounded-full transition-all duration-300 shadow-yellow-sm"
-                    style={{ width: `${continueListeningBook.progressPercentage || 0}%` }}
-                  />
-                </div>
-              </div>
+              {(() => {
+                const isHeroActive = currentBook?.id === continueListeningBook.id;
+                const heroCurrent = isHeroActive && currentTime > 0 ? currentTime : (continueListeningBook.lastPositionSeconds || 0);
+                const heroDur = isHeroActive && duration > 0 ? duration : (continueListeningBook.totalDuration || 0);
+                const heroPct = heroDur > 0 ? Math.min(100, Math.round((heroCurrent / heroDur) * 100)) : (continueListeningBook.progressPercentage || 0);
+
+                return (
+                  <div className="space-y-1.5 max-w-md mx-auto md:mx-0 pt-2">
+                    <div className="flex justify-between text-xs font-medium text-gray-400">
+                      <span>
+                        {formatDuration(heroCurrent)} of {formatDuration(heroDur)}
+                      </span>
+                      <span className="text-[#FFD600] font-bold">
+                        {heroPct}% Complete
+                      </span>
+                    </div>
+                    <div className="w-full bg-[#262626] h-2 rounded-full overflow-hidden">
+                      <div
+                        className="bg-[#FFD600] h-full rounded-full transition-all duration-300 shadow-yellow-sm"
+                        style={{ width: `${heroPct}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Action Buttons */}
               <div className="flex items-center justify-center md:justify-start gap-3 pt-2">

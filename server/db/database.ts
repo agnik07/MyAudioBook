@@ -26,12 +26,48 @@ export async function getDb(): Promise<Database> {
   return db;
 }
 
-function saveDb() {
+let saveDbTimeout: NodeJS.Timeout | null = null;
+
+export function saveDb(immediate: boolean = false) {
   if (!db) return;
-  const data = db.export();
-  const buffer = Buffer.from(data);
-  fs.writeFileSync(dbPath, buffer);
+
+  const doSave = () => {
+    if (!db) return;
+    try {
+      const data = db.export();
+      const buffer = Buffer.from(data);
+      fs.writeFileSync(dbPath, buffer);
+    } catch (e) {
+      console.error('[SQLite Disk Write Error]:', e);
+    }
+  };
+
+  if (immediate) {
+    if (saveDbTimeout) {
+      clearTimeout(saveDbTimeout);
+      saveDbTimeout = null;
+    }
+    doSave();
+  } else {
+    if (!saveDbTimeout) {
+      saveDbTimeout = setTimeout(() => {
+        saveDbTimeout = null;
+        doSave();
+      }, 1500);
+    }
+  }
 }
+
+// Flush pending database writes on process termination
+process.on('beforeExit', () => saveDb(true));
+process.on('SIGINT', () => {
+  saveDb(true);
+  process.exit(0);
+});
+process.on('SIGTERM', () => {
+  saveDb(true);
+  process.exit(0);
+});
 
 function initDatabase(database: Database) {
   database.exec(`

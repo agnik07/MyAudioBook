@@ -290,11 +290,20 @@ export async function deleteR2Item(key: string): Promise<void> {
   }
 }
 
+let lastR2SyncTime = 0;
+const R2_SYNC_INTERVAL_MS = 5 * 60 * 1000; // 5 minute throttle between background bucket crawls
+
 /**
  * Automatically sync/recover books and user listening progress from Cloudflare R2 Object Storage into SQLite
  */
-export async function syncBooksFromR2(): Promise<number> {
+export async function syncBooksFromR2(force: boolean = false): Promise<number> {
   if (!isR2Configured()) return 0;
+
+  const now = Date.now();
+  if (!force && lastR2SyncTime > 0 && now - lastR2SyncTime < R2_SYNC_INTERVAL_MS) {
+    return 0; // Throttled: Recently synced
+  }
+  lastR2SyncTime = now;
 
   try {
     const s3 = getR2Client();
