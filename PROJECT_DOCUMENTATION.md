@@ -656,7 +656,17 @@ navigator.mediaSession.metadata = new MediaMetadata({
 ```
 
 - **Lock Screen Controls**: Supports Play, Pause, Seek Backward, Seek Forward, Next Track (Chapter), Previous Track (Chapter), and SeekTo position.
-- **Position State**: Calls `navigator.mediaSession.setPositionState()` to synchronize lock screen scrubber bars on iOS and Android.
+- **Position State**: Calls `navigator.mediaSession.setPositionState()` to synchronize lock screen scrubber bars on iOS and Android. Throttled to 4-second intervals and playback events to prevent mobile IPC bridge saturation.
+
+---
+
+### 7.3 Mobile WebKit & iOS PWA Standalone Optimization
+
+To ensure a smooth native-like experience when running as an "Add to Home Screen" standalone web app on iOS (iPhone 12 and newer):
+- **Synchronous User-Gesture Autoplay Activation**: WebKit drops audio autoplay permissions if network promises (`fetch()`) are awaited before calling `audio.play()`. Playback initialization determines positions synchronously from memory/localStorage and triggers `audio.play()` synchronously, offloading chapter fetching and edge URL cache warming to the background.
+- **High-Frequency Render Decoupling**: Raw HTML5 `timeupdate` events fire up to 15 times/sec on WebKit. React state updates are throttled to ~250ms / integer second transitions. Progress indicators are isolated in dedicated subcomponents (`HeroProgressBar`), and library cards (`BookCard`) are memoized with `React.memo`, preventing thousands of unnecessary component renders during active playback.
+- **Safe Area Insets & Standalone Layout**: Configured with `viewport-fit=cover`, `apple-mobile-web-app-capable`, `apple-mobile-web-app-status-bar-style: black-translucent`, and dynamic CSS padding (`env(safe-area-inset-top)` and `env(safe-area-inset-bottom)`) to ensure navigation bars and player controls never collide with the iPhone notch or home swipe bar.
+- **Input Responsiveness**: Configured with `touch-action: manipulation` across the entire document to eliminate the standard 300ms mobile browser tap delay.
 
 ---
 

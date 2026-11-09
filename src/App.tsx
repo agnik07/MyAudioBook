@@ -29,7 +29,7 @@ export const AppContent: React.FC = () => {
       <DesktopSidebar />
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col min-w-0 min-h-screen pb-28 md:pb-24">
+      <div className="flex-1 flex flex-col min-w-0 min-h-screen pb-[calc(7.5rem+env(safe-area-inset-bottom,0px))] md:pb-24">
         {/* Mobile Top Header */}
         <MobileHeader />
 

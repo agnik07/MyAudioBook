@@ -8,11 +8,22 @@
     --foreground: 0 0% 100%;
   }
 
+  html {
+    touch-action: manipulation;
+    -webkit-overflow-scrolling: touch;
+    -webkit-text-size-adjust: 100%;
+  }
+
   body {
     background-color: #050505;
     color: #ffffff;
     font-family: 'Inter', system-ui, -apple-system, sans-serif;
     -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+
+  button, input, a, select {
+    touch-action: manipulation;
   }
 }
 

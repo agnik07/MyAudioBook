@@ -66,7 +66,7 @@ export const PersistentPlayer: React.FC = () => {
   return (
     <>
       {/* DESKTOP & MOBILE MINI PLAYER (Sticky at Bottom) */}
-      <div className="fixed bottom-14 md:bottom-0 left-0 right-0 z-40 bg-[#0D0D0D]/95 backdrop-blur-xl border-t border-[#1F1F1F] text-white shadow-2xl transition-all duration-300">
+      <div className="fixed bottom-[calc(3.5rem+env(safe-area-inset-bottom,0px))] md:bottom-0 left-0 right-0 z-40 bg-[#0D0D0D]/95 backdrop-blur-xl border-t border-[#1F1F1F] text-white shadow-2xl transition-all duration-300">
         {/* Top Seek Progress Line (Thin accent line on player border) */}
         <div
           className="relative w-full h-1 bg-[#1A1A1A] cursor-pointer group"
@@ -227,7 +227,7 @@ export const PersistentPlayer: React.FC = () => {
 
       {/* FULL-SCREEN EXPANDED PLAYER FOR MOBILE */}
       {isExpanded && (
-        <div className="fixed inset-0 z-50 bg-[#050505] flex flex-col justify-between p-6 overflow-y-auto animate-in fade-in slide-in-from-bottom duration-300">
+        <div className="fixed inset-0 z-50 bg-[#050505] flex flex-col justify-between px-6 pt-[max(1.5rem,env(safe-area-inset-top))] pb-[max(1.5rem,env(safe-area-inset-bottom))] overflow-y-auto animate-in fade-in slide-in-from-bottom duration-300">
           {/* Header */}
           <div className="flex items-center justify-between pt-2 pb-4">
             <button

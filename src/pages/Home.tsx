@@ -8,12 +8,40 @@ import { formatDuration } from '../lib/utils';
 import { Play, Pause, Sparkles, BookOpen, Clock, Heart } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { API_BASE, getCoverUrl } from '../lib/api';
+import { Book } from '../types/audiobook';
+
+const HeroProgressBar: React.FC<{ book: Book }> = React.memo(({ book }) => {
+  const { currentBook, currentTime, duration } = useAudioPlayer();
+  const isHeroActive = currentBook?.id === book.id;
+  const heroCurrent = isHeroActive && currentTime > 0 ? currentTime : (book.lastPositionSeconds || 0);
+  const heroDur = isHeroActive && duration > 0 ? duration : (book.totalDuration || 0);
+  const heroPct = heroDur > 0 ? Math.min(100, Math.round((heroCurrent / heroDur) * 100)) : (book.progressPercentage || 0);
+
+  return (
+    <div className="space-y-1.5 max-w-md mx-auto md:mx-0 pt-2">
+      <div className="flex justify-between text-xs font-medium text-gray-400">
+        <span>
+          {formatDuration(heroCurrent)} of {formatDuration(heroDur)}
+        </span>
+        <span className="text-[#FFD600] font-bold">
+          {heroPct}% Complete
+        </span>
+      </div>
+      <div className="w-full bg-[#262626] h-2 rounded-full overflow-hidden">
+        <div
+          className="bg-[#FFD600] h-full rounded-full transition-all duration-300 shadow-yellow-sm"
+          style={{ width: `${heroPct}%` }}
+        />
+      </div>
+    </div>
+  );
+});
 
 export const Home: React.FC = () => {
   const navigate = useNavigate();
   const { profile } = useAuth();
   const { allBooks, toggleFavorite, deleteBook } = useBooks();
-  const { currentBook, isPlaying, playBook, togglePlayPause, currentTime, duration } = useAudioPlayer();
+  const { currentBook, isPlaying, playBook, togglePlayPause } = useAudioPlayer();
 
   // Greeting based on hour
   const hour = new Date().getHours();
@@ -54,11 +82,15 @@ export const Home: React.FC = () => {
     return allBooks[0] || null;
   }, [currentBook, allBooks]);
 
-  const recentlyAdded = [...allBooks]
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-    .slice(0, 5);
+  const recentlyAdded = useMemo(
+    () => [...allBooks].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 5),
+    [allBooks]
+  );
 
-  const favoriteBooks = allBooks.filter((b) => b.isFavorite).slice(0, 5);
+  const favoriteBooks = useMemo(
+    () => allBooks.filter((b) => b.isFavorite).slice(0, 5),
+    [allBooks]
+  );
 
   return (
     <div className="space-y-8 pb-12">
@@ -119,32 +151,8 @@ export const Home: React.FC = () => {
               </h2>
               <p className="text-sm text-gray-400 font-medium">By {continueListeningBook.author}</p>
 
-              {/* Progress Bar */}
-              {(() => {
-                const isHeroActive = currentBook?.id === continueListeningBook.id;
-                const heroCurrent = isHeroActive && currentTime > 0 ? currentTime : (continueListeningBook.lastPositionSeconds || 0);
-                const heroDur = isHeroActive && duration > 0 ? duration : (continueListeningBook.totalDuration || 0);
-                const heroPct = heroDur > 0 ? Math.min(100, Math.round((heroCurrent / heroDur) * 100)) : (continueListeningBook.progressPercentage || 0);
-
-                return (
-                  <div className="space-y-1.5 max-w-md mx-auto md:mx-0 pt-2">
-                    <div className="flex justify-between text-xs font-medium text-gray-400">
-                      <span>
-                        {formatDuration(heroCurrent)} of {formatDuration(heroDur)}
-                      </span>
-                      <span className="text-[#FFD600] font-bold">
-                        {heroPct}% Complete
-                      </span>
-                    </div>
-                    <div className="w-full bg-[#262626] h-2 rounded-full overflow-hidden">
-                      <div
-                        className="bg-[#FFD600] h-full rounded-full transition-all duration-300 shadow-yellow-sm"
-                        style={{ width: `${heroPct}%` }}
-                      />
-                    </div>
-                  </div>
-                );
-              })()}
+              {/* Progress Bar (Isolated to prevent full Home re-renders) */}
+              <HeroProgressBar book={continueListeningBook} />
 
               {/* Action Buttons */}
               <div className="flex items-center justify-center md:justify-start gap-3 pt-2">

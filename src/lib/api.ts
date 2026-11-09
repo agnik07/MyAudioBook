@@ -38,10 +38,14 @@ export function getFullCoverUrl(book: Book): string {
   }
   if (cover.startsWith('/')) {
     try {
-      return new URL(cover, window.location.origin).href;
+      cover = new URL(cover, window.location.origin).href;
     } catch (e) {
-      return cover;
+      // keep relative if URL parse fails
     }
+  }
+  // Guarantee HTTPS on secure origins to prevent mixed-content blocks on iOS Safari
+  if (typeof window !== 'undefined' && window.location.protocol === 'https:' && cover.startsWith('http://')) {
+    cover = cover.replace('http://', 'https://');
   }
   return cover;
 }

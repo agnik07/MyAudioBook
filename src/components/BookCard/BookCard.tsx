@@ -12,7 +12,7 @@ interface BookCardProps {
   onDeleteBook?: (id: string) => void;
 }
 
-export const BookCard: React.FC<BookCardProps> = ({ book, onToggleFavorite, onDeleteBook }) => {
+export const BookCard: React.FC<BookCardProps> = React.memo(({ book, onToggleFavorite, onDeleteBook }) => {
   const navigate = useNavigate();
   const { currentBook, isPlaying, playBook, togglePlayPause } = useAudioPlayer();
 
@@ -137,4 +137,4 @@ export const BookCard: React.FC<BookCardProps> = ({ book, onToggleFavorite, onDe
       )}
     </div>
   );
-};
+});

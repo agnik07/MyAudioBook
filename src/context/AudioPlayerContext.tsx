@@ -42,6 +42,9 @@ export const AudioPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const lastValidTimeRef = useRef<number>(0);
   const isAdvancingChapterRef = useRef<boolean>(false);
   const activePresignedUrlRef = useRef<{ bookId: string; url: string; expiresAt: number } | null>(null);
+  const lastTimeUpdateCallRef = useRef<number>(0);
+  const lastRenderedSecRef = useRef<number>(-1);
+  const lastMediaSessionSyncSecRef = useRef<number>(-1);
 
   // State refs to eliminate stale closures in event listeners
   const currentBookRef = useRef<Book | null>(null);
@@ -240,13 +243,26 @@ export const AudioPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const chapter = currentChapterRef.current;
     if (!book) return;
 
+    // CRITICAL: Never overwrite valid progress while seeking or restoring position
+    if (isRestoringProgressRef.current || pendingSeekTimeRef.current !== null) {
+      return;
+    }
+
+    const audio = audioRef.current;
+    const currentAudioTime = audio ? audio.currentTime : 0;
+
     // Use the maximum of currentTime and lastValidTimeRef to avoid capturing momentary 0 during seeks
     const pos = Math.max(
-      Math.floor(audioRef.current?.currentTime || 0),
+      Math.floor(currentAudioTime || 0),
       lastValidTimeRef.current
     );
 
-    const dur = audioRef.current?.duration || book.totalDuration || 0;
+    // Guard: Prevent saving 0 if book previously had valid progress
+    if (pos <= 0 && (book.lastPositionSeconds || 0) > 0) {
+      return;
+    }
+
+    const dur = audio?.duration || book.totalDuration || 0;
     saveProgressForBook(book, chapter, pos, dur);
   }, [saveProgressForBook]);
 
@@ -258,14 +274,19 @@ export const AudioPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
     if (!audio) return;
 
     try {
-      audio.currentTime = targetPos;
-      setCurrentTime(targetPos);
-      lastValidTimeRef.current = Math.floor(targetPos);
+      if (audio.readyState >= 1) { // HAVE_METADATA or more
+        audio.currentTime = targetPos;
+        setCurrentTime(targetPos);
+        lastValidTimeRef.current = Math.floor(targetPos);
+        syncPositionState();
+      } else {
+        pendingSeekTimeRef.current = targetPos;
+      }
     } catch (err) {
       console.warn('[Audio Seek Warning] Direct seek threw error, deferring to canplay:', err);
       pendingSeekTimeRef.current = targetPos;
     }
-  }, []);
+  }, [syncPositionState]);
 
   /**
    * Audio Element Lifecycle Listeners: Mounted once to avoid unbinding closures
@@ -279,7 +300,7 @@ export const AudioPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
       if (isNaN(time)) return;
 
       // If we are actively restoring progress or seeking, don't trigger auto-advance or normal progress updates
-      if (isRestoringProgressRef.current) {
+      if (isRestoringProgressRef.current || pendingSeekTimeRef.current !== null) {
         if (pendingSeekTimeRef.current !== null && Math.abs(time - pendingSeekTimeRef.current) < 2) {
           isRestoringProgressRef.current = false;
           pendingSeekTimeRef.current = null;
@@ -288,16 +309,30 @@ export const AudioPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
         }
       }
 
-      setCurrentTime(time);
-      if (audio.duration && !isNaN(audio.duration) && isFinite(audio.duration)) {
-        setDuration(audio.duration);
-      }
-
       if (time > 0) {
         lastValidTimeRef.current = Math.floor(time);
       }
 
-      syncPositionState();
+      // Throttle React state updates to ~250ms or whole integer seconds (Prevents mobile UI lag)
+      const now = performance.now();
+      const intSec = Math.floor(time);
+      if (intSec !== lastRenderedSecRef.current || now - lastTimeUpdateCallRef.current >= 250) {
+        lastTimeUpdateCallRef.current = now;
+        lastRenderedSecRef.current = intSec;
+        setCurrentTime(time);
+      }
+
+      if (audio.duration && !isNaN(audio.duration) && isFinite(audio.duration)) {
+        if (Math.abs(audio.duration - duration) > 1) {
+          setDuration(audio.duration);
+        }
+      }
+
+      // Throttle MediaSession setPositionState to every 4s (Prevents iOS mediaremoted daemon flooding)
+      if (intSec % 4 === 0 && intSec !== lastMediaSessionSyncSecRef.current) {
+        lastMediaSessionSyncSecRef.current = intSec;
+        syncPositionState();
+      }
 
       // Dynamic Active Chapter Detection
       const activeChapters = chaptersRef.current;
@@ -511,30 +546,19 @@ export const AudioPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
       return;
     }
 
-    // SCENARIO E: Switching from a different book -> Save outgoing book's progress first!
+    // SCENARIO E: Switching from a different book -> Save outgoing book's progress in background
     if (currentBookRef.current && currentBookRef.current.id !== book.id) {
+      const outgoingBook = currentBookRef.current;
+      const outgoingChapter = currentChapterRef.current;
       const posToSave = Math.max(Math.floor(audio.currentTime || 0), lastValidTimeRef.current);
-      await saveProgressForBook(currentBookRef.current, currentChapterRef.current, posToSave, duration);
+      // Non-blocking save to preserve iOS Safari user gesture activation
+      saveProgressForBook(outgoingBook, outgoingChapter, posToSave, duration).catch(() => {});
       lastValidTimeRef.current = 0;
     }
 
     setCurrentBook(book);
 
-    // Fetch and normalize chapters
-    let bookChapters: Chapter[] = customChapters || [];
-    if (bookChapters.length === 0) {
-      try {
-        const details = await fetchBookDetails(book.id);
-        bookChapters = details.chapters || [];
-      } catch (err) {
-        console.warn('Could not fetch book chapters from server:', err);
-      }
-    }
-
-    const validatedChapters = normalizeAndValidateChapters(bookChapters, book.totalDuration);
-    setChapters(validatedChapters);
-
-    // DETERMINISTIC RECONCILIATION: Compare local and server timestamps
+    // DETERMINISTIC RECONCILIATION: Compare local and server timestamps SYNCHRONOUSLY
     let serverPos = typeof book.lastPositionSeconds === 'number' ? book.lastPositionSeconds : 0;
     let serverTime = book.lastPlayedAt ? new Date(book.lastPlayedAt).getTime() : 0;
     let localPos = 0;
@@ -578,6 +602,25 @@ export const AudioPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
     const targetPos = Math.max(0, resolvedPos || 0);
 
+    // Initial chapters: customChapters or minimal fallback
+    let initialChapters: Chapter[] = customChapters || [];
+    if (initialChapters.length === 0) {
+      initialChapters = [
+        {
+          id: resolvedChapterId || `ch-${book.id}-1`,
+          bookId: book.id,
+          chapterNumber: 1,
+          title: 'Chapter 1',
+          startTime: 0,
+          endTime: book.totalDuration || 3600,
+          duration: book.totalDuration || 3600,
+          audioUrl: getAudioStreamUrl(book.id),
+        },
+      ];
+    }
+    const validatedChapters = normalizeAndValidateChapters(initialChapters, book.totalDuration);
+    setChapters(validatedChapters);
+
     // Identify active chapter for target position
     let targetChapter: Chapter | undefined;
     if (resolvedChapterId) {
@@ -594,8 +637,18 @@ export const AudioPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
     setCurrentChapter(targetChapter || null);
 
-    // Get streaming URL
-    const audioStreamUrl = await getOrFetchAudioUrl(book.id);
+    // Direct audio URL: use cached presigned URL or direct streaming endpoint
+    const now = Date.now();
+    let audioStreamUrl = '';
+    if (
+      activePresignedUrlRef.current &&
+      activePresignedUrlRef.current.bookId === book.id &&
+      activePresignedUrlRef.current.expiresAt > now + 5 * 60 * 1000
+    ) {
+      audioStreamUrl = activePresignedUrlRef.current.url;
+    } else {
+      audioStreamUrl = getAudioStreamUrl(book.id);
+    }
 
     // Load audio and queue seek
     audio.preload = 'auto';
@@ -603,7 +656,7 @@ export const AudioPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
     pendingSeekTimeRef.current = targetPos;
     lastValidTimeRef.current = Math.floor(targetPos);
 
-    // Assign source & trigger playback
+    // Assign source & trigger playback synchronously inside the user gesture
     const currentSrc = audio.src;
     const isSameSrc = currentSrc === audioStreamUrl || (audioStreamUrl.startsWith('http') && currentSrc.includes(audioStreamUrl));
 
@@ -617,11 +670,47 @@ export const AudioPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
     audio.playbackRate = playbackRate;
     audio.volume = isMuted ? 0 : volume;
 
-    audio.play()
-      .then(() => setIsPlaying(true))
-      .catch((e) => {
-        if (e.name !== 'AbortError') console.warn('Audio play error:', e);
-      });
+    // Trigger playback synchronously in user gesture handler (no async delay before this)
+    const playPromise = audio.play();
+    if (playPromise !== undefined) {
+      playPromise
+        .then(() => setIsPlaying(true))
+        .catch((e) => {
+          if (e.name !== 'AbortError') console.warn('Audio play error:', e);
+        });
+    }
+
+    // Background: fetch full chapters if not already provided
+    if (!customChapters || customChapters.length === 0) {
+      fetchBookDetails(book.id)
+        .then((details) => {
+          if (details?.chapters && details.chapters.length > 0 && currentBookRef.current?.id === book.id) {
+            const norm = normalizeAndValidateChapters(details.chapters, book.totalDuration);
+            setChapters(norm);
+            const curTime = audio.currentTime || targetPos;
+            const match = norm.find(
+              (c) => curTime >= c.startTime && (c.endTime > c.startTime ? curTime < c.endTime : true)
+            );
+            if (match) setCurrentChapter(match);
+          }
+        })
+        .catch(() => {});
+    }
+
+    // Background: warm presigned edge URL cache if currently on fallback URL
+    if (audioStreamUrl !== activePresignedUrlRef.current?.url) {
+      fetchAudioPresignedUrl(book.id)
+        .then((res) => {
+          if (res?.url) {
+            activePresignedUrlRef.current = {
+              bookId: book.id,
+              url: res.url,
+              expiresAt: new Date(res.expiresAt).getTime(),
+            };
+          }
+        })
+        .catch(() => {});
+    }
   };
 
   /**
@@ -634,29 +723,41 @@ export const AudioPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const audio = audioRef.current;
     if (!audio) return;
 
-    // If switching books, save outgoing book progress first
+    // If switching books, save outgoing book progress in background
     if (currentBookRef.current && currentBookRef.current.id !== activeBook.id) {
       const posToSave = Math.max(Math.floor(audio.currentTime || 0), lastValidTimeRef.current);
-      await saveProgressForBook(currentBookRef.current, currentChapterRef.current, posToSave, duration);
+      saveProgressForBook(currentBookRef.current, currentChapterRef.current, posToSave, duration).catch(() => {});
       lastValidTimeRef.current = 0;
       setCurrentBook(activeBook);
     }
 
     // Ensure chapters list contains this chapter and is up-to-date
     if (chaptersRef.current.length === 0 || !chaptersRef.current.some((c) => c.id === chapter.id)) {
-      try {
-        const details = await fetchBookDetails(activeBook.id);
-        const norm = normalizeAndValidateChapters(details.chapters || [chapter], activeBook.totalDuration);
-        setChapters(norm);
-      } catch (e) {
-        setChapters([chapter]);
-      }
+      setChapters([chapter]);
+      fetchBookDetails(activeBook.id)
+        .then((details) => {
+          if (details?.chapters) {
+            setChapters(normalizeAndValidateChapters(details.chapters, activeBook.totalDuration));
+          }
+        })
+        .catch(() => {});
     }
 
     setCurrentChapter(chapter);
     const startTime = Math.max(0, chapter.startTime || 0);
 
-    const audioStreamUrl = await getOrFetchAudioUrl(activeBook.id);
+    const now = Date.now();
+    let audioStreamUrl = '';
+    if (
+      activePresignedUrlRef.current &&
+      activePresignedUrlRef.current.bookId === activeBook.id &&
+      activePresignedUrlRef.current.expiresAt > now + 5 * 60 * 1000
+    ) {
+      audioStreamUrl = activePresignedUrlRef.current.url;
+    } else {
+      audioStreamUrl = getAudioStreamUrl(activeBook.id);
+    }
+
     const currentSrc = audio.src;
     const isSameSrc = currentSrc === audioStreamUrl || (audioStreamUrl.startsWith('http') && currentSrc.includes(audioStreamUrl));
 
@@ -674,11 +775,14 @@ export const AudioPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
     audio.playbackRate = playbackRate;
     audio.volume = isMuted ? 0 : volume;
 
-    audio.play()
-      .then(() => setIsPlaying(true))
-      .catch((e) => {
-        if (e.name !== 'AbortError') console.warn('Audio play error:', e);
-      });
+    const playPromise = audio.play();
+    if (playPromise !== undefined) {
+      playPromise
+        .then(() => setIsPlaying(true))
+        .catch((e) => {
+          if (e.name !== 'AbortError') console.warn('Audio play error:', e);
+        });
+    }
   };
 
   const togglePlayPause = () => {
@@ -898,7 +1002,7 @@ export const AudioPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
         toggleExpand,
       }}
     >
-      <audio ref={audioRef} preload="auto" playsInline className="hidden" />
+      <audio ref={audioRef} preload="auto" playsInline crossOrigin="anonymous" className="hidden" />
       {children}
     </AudioPlayerContext.Provider>
   );

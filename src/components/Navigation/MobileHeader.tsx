@@ -7,7 +7,7 @@ export const MobileHeader: React.FC = () => {
   const { profile } = useAuth();
 
   return (
-    <header className="md:hidden sticky top-0 z-30 bg-[#050505]/95 backdrop-blur-md border-b border-[#1A1A1A] px-4 py-3 flex items-center justify-between">
+    <header className="md:hidden sticky top-0 z-30 bg-[#050505]/95 backdrop-blur-md border-b border-[#1A1A1A] px-4 pt-[max(0.75rem,env(safe-area-inset-top))] pb-3 flex items-center justify-between">
       <div className="flex items-center gap-2.5">
         <div className="w-8 h-8 rounded-lg bg-[#FFD600] text-black flex items-center justify-center shadow-yellow-sm">
           <Headphones className="w-5 h-5 stroke-[2.5]" />

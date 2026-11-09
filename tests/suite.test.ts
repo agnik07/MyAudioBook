@@ -1,4 +1,6 @@
 import assert from 'assert';
+import fs from 'fs';
+import path from 'path';
 import {
   parseTimestampToSeconds,
   formatTime,
@@ -250,6 +252,24 @@ async function runTestSuite() {
   await test('syncBooksFromR2 respects 5-minute throttle and does not spam bucket on every request', async () => {
     const count1 = await syncBooksFromR2(false);
     assert.strictEqual(count1, 0, 'Subsequent unforced call within 5m must return 0 immediately without I/O');
+  });
+
+  // ====================================================
+  // TEST SUITE 6: MOBILE WEBKIT & PWA INTEGRITY
+  // ====================================================
+  console.log('\n--- TEST GROUP 6: Mobile WebKit & PWA Integrity ---');
+
+  test('PWA manifest contains standalone display and valid scope', () => {
+    const manifest = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'public/manifest.json'), 'utf8'));
+    assert.strictEqual(manifest.display, 'standalone', 'PWA must be configured for standalone mode');
+    assert.strictEqual(manifest.scope, '/', 'PWA must specify root scope');
+  });
+
+  test('HTML entrypoint contains Apple mobile web app capable and viewport-fit=cover', () => {
+    const html = fs.readFileSync(path.join(process.cwd(), 'index.html'), 'utf8');
+    assert.ok(html.includes('apple-mobile-web-app-capable'), 'HTML must declare apple-mobile-web-app-capable');
+    assert.ok(html.includes('viewport-fit=cover'), 'HTML must declare viewport-fit=cover for iPhone notch and home bar');
+    assert.ok(html.includes('apple-mobile-web-app-status-bar-style'), 'HTML must declare apple-mobile-web-app-status-bar-style');
   });
 
   // ====================================================
